@@ -1,15 +1,49 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
+# Copyright (C) Daniel McLarty 2026
 
 import os
-import subprocess
-import torch
+import sys
 import warnings
+
+# --- SILENCE WARNINGS ---
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
-HF_TOKEN = "hf_" # Put your token here!
+# --- PATHING & ENV SETUP ---
+if getattr(sys, 'frozen', False):
+    ROOT_DIR = os.path.dirname(sys.executable)
+else:
+    # Assuming test_env.py is in /src/
+    ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# --- MODEL REDIRECTION ---
+MODELS_DIR = os.path.join(ROOT_DIR, "models")
+os.makedirs(MODELS_DIR, exist_ok=True)
+
+os.environ["HF_HOME"] = os.path.join(MODELS_DIR, "huggingface")
+os.environ["HUGGINGFACE_HUB_CACHE"] = os.path.join(MODELS_DIR, "huggingface")
+os.environ["TORCH_HOME"] = os.path.join(MODELS_DIR, "torch")
+os.environ["XDG_CACHE_HOME"] = os.path.join(MODELS_DIR, "misc_cache")
+os.environ["TTS_HOME"] = os.path.join(MODELS_DIR, "tts")
+
+# --- BINARY PATHING (FFMPEG) ---
+bin_dir = os.path.join(ROOT_DIR, "bin")
+if os.path.exists(bin_dir) and os.name == 'nt':
+    os.environ["PATH"] = bin_dir + os.pathsep + os.environ["PATH"]
+
+# --- IMPORTS ---
+import subprocess
+import argparse
+import torch
+
+# --- CLI ARGUMENTS ---
+parser = argparse.ArgumentParser(description="Test AI Auto-Dubbing Environment")
+parser.add_argument("--hf-token", required=True, help="Your Hugging Face Token")
+args = parser.parse_args()
+
+HF_TOKEN = args.hf_token
 
 print("--- COMMENCING PRE-FLIGHT CHECKS ---\n")
 
@@ -51,4 +85,3 @@ except Exception as e:
     print(f"   -> ERROR: XTTSv2 failed to load! {e}")
 
 print("\n--- ALL CHECKS COMPLETED ---")
-print("If you see 4 SUCCESS messages above, your environment is bulletproof. You are cleared to run the main script!")

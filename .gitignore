@@ -3,6 +3,9 @@ dub_env/
 venv/
 env/
 
+# AI Models
+models/
+
 # Media Files
 *.mkv
 *.mp4
@@ -25,6 +28,7 @@ dubbing_process.log
 # Generated Folders & Artifacts
 temp/
 output/
+ui_config.json
 
 # Python Cache
 __pycache__/

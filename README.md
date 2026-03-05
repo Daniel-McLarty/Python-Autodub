@@ -12,10 +12,28 @@ An automated, AI-powered video dubbing pipeline that extracts audio, separates v
 ## Prerequisites
 1. **NVIDIA GPU:** A CUDA-compatible GPU is highly recommended (and practically required) for XTTSv2, Demucs, and Pyannote to run in a reasonable timeframe.
 2. **Python 3.9 - 3.11:** Recommended Python version.
-3. **FFmpeg:** Must be installed on your system and added to your system's `PATH`.
-4. **Hugging Face Account:** You need a Hugging Face token to use Pyannote. You must also visit the following pages while logged in to accept their user conditions:
+3. **Hugging Face Account:** You need a Hugging Face token to use Pyannote. You must also visit the following pages while logged in to accept their user conditions:
    * [pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1)
    * [pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0)
+
+## FFmpeg Dependency & Licensing
+
+To handle high-performance audio normalization and video muxing, this project utilizes **FFmpeg**.
+
+### **Installation**
+- **Windows:** A custom-built, optimized FFmpeg binary is included in the `bin/` folder. No additional installation is required.
+- **Linux:** Please install FFmpeg via your system's package manager:
+  - **Ubuntu/Debian:** `sudo apt update && sudo apt install ffmpeg`
+  - **Fedora:** `sudo dnf install ffmpeg`
+  - **Arch:** `sudo pacman -S ffmpeg`
+
+### **Licensing & LGPL Compliance**
+This software uses a custom build of **FFmpeg** licensed under the [GNU Lesser General Public License (LGPL) version 2.1](http://www.gnu.org/licenses/old-licenses/lgpl-2.1.html).
+
+- **No Changes:** We have not modified the FFmpeg source code.
+- **License Text:** A copy of the LGPL v2.1 is provided in `bin/FFMPEG_LGPL`.
+- **Build Instructions:** Details on how this binary was configured and compiled can be found in `bin/build_info.md`.
+- **Source Code:** You can obtain the official FFmpeg source code at [ffmpeg.org](https://ffmpeg.org/download.html).
 
 ## Installation
 

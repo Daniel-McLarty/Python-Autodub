@@ -20,14 +20,14 @@ python3 -m venv dub_env
 echo -e "\n[3/4] Activating virtual environment and installing requirements..."
 source dub_env/bin/activate
 pip install --upgrade pip
-pip install -r requirements.txt
+pip install --no-cache-dir -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu121
 
 echo -e "\n[4/4] Checking FFmpeg installation..."
 if ! command -v ffmpeg &> /dev/null
 then
     echo "WARNING: FFmpeg is not installed!"
     echo "You MUST install FFmpeg for this script to work."
-    echo "Run: sudo apt install ffmpeg"
+    echo "Please look up the command to install ffmpeg from your system package manager."
 else
     echo "FFmpeg is installed!"
 fi

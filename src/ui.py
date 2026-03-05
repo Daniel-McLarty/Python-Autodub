@@ -1,41 +1,74 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
+# Copyright (C) Daniel McLarty 2026
 
 import os
 import sys
-import subprocess
-import shutil
-import srt
-import torch
-import logging
-import threading
-import queue
 import warnings
 
-import multiprocessing as mp
-import tkinter as tk
-
-from tkinter import filedialog, ttk, scrolledtext
-from pydub import AudioSegment
-from pyannote.audio import Pipeline 
-
+# --- SILENCE WARNINGS ---
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
-# --- PATHING SETUP ---
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-ROOT_DIR = os.path.dirname(SCRIPT_DIR)
+# --- PATHING & ENV SETUP ---
+if getattr(sys, 'frozen', False):
+    # Running as compiled executable
+    ROOT_DIR = os.path.dirname(sys.executable)
+    SCRIPT_DIR = os.path.join(ROOT_DIR, "src")
+else:
+    # Running as standard script
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+    ROOT_DIR = os.path.dirname(SCRIPT_DIR)
+
+# --- MODEL REDIRECTION ---
+MODELS_DIR = os.path.join(ROOT_DIR, "models")
+os.makedirs(MODELS_DIR, exist_ok=True)
+os.environ["HF_HOME"] = os.path.join(MODELS_DIR, "huggingface")
+os.environ["HUGGINGFACE_HUB_CACHE"] = os.path.join(MODELS_DIR, "huggingface")
+os.environ["TORCH_HOME"] = os.path.join(MODELS_DIR, "torch")
+os.environ["XDG_CACHE_HOME"] = os.path.join(MODELS_DIR, "misc_cache")
+os.environ["TTS_HOME"] = os.path.join(MODELS_DIR, "tts")
+
+# --- BINARY PATHING ---
+bin_dir = os.path.join(ROOT_DIR, "bin")
+if os.path.exists(bin_dir) and os.name == 'nt':
+    os.environ["PATH"] = bin_dir + os.pathsep + os.environ["PATH"]
+
+# --- STANDARD LIBRARY IMPORTS ---
+import subprocess
+import srt
+import logging
+import threading
+import queue
+import json
+import multiprocessing as mp
+import tkinter as tk
+from tkinter import filedialog, ttk, scrolledtext
+
+# --- AI IMPORTS ---
+import torch
+from pydub import AudioSegment
+from pyannote.audio import Pipeline
+
+# --- OTHER DIRECTORIES ---
 TEMP_DIR = os.path.join(ROOT_DIR, "temp")
 OUTPUT_DIR = os.path.join(ROOT_DIR, "output")
+os.makedirs(TEMP_DIR, exist_ok=True)
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# --- SETTINGS FILES ---
+CONFIG_FILE = os.path.join(ROOT_DIR, "ui_config.json")
+TOS_FILE = os.path.join(MODELS_DIR, "tts", ".tos_agreed")
 
 # --- WORKER INITIALIZATION ---
 worker_model = None
 
 def init_worker():
     global worker_model
+    os.environ["COQUI_TOS_AGREED"] = "1"
+
     from TTS.api import TTS
-    # Load model once per worker process
     worker_model = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to("cuda")
 
 def dub_worker_standalone(args):
@@ -134,6 +167,18 @@ class DubbingApp:
         self.progress_queue = queue.Queue()
         self.is_running = False
 
+        # --- LOAD SAVED SETTINGS ---
+        self.saved_token = "hf_YOUR_TOKEN_HERE"
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, "r") as f:
+                    self.saved_token = json.load(f).get("hf_token", self.saved_token)
+            except Exception:
+                pass
+
+        # Check if TOS was already agreed to previously
+        self.saved_tos = os.path.exists(TOS_FILE)
+
         self.ensure_directories()
         self.build_ui()
         self.setup_logging()
@@ -187,7 +232,7 @@ class DubbingApp:
         set_frame.pack(fill="x", **pad)
 
         ttk.Label(set_frame, text="HF Token:").grid(row=0, column=0, sticky="e", **pad)
-        self.token_var = tk.StringVar(value="hf_YOUR_TOKEN_HERE")
+        self.token_var = tk.StringVar(value=self.saved_token)
         ttk.Entry(set_frame, textvariable=self.token_var, width=40).grid(row=0, column=1, columnspan=3, sticky="w", **pad)
 
         ttk.Label(set_frame, text="Max Speakers:").grid(row=1, column=0, sticky="e", **pad)
@@ -204,6 +249,9 @@ class DubbingApp:
 
         self.hybrid_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(set_frame, text="Use Hybrid Emotion Cloning", variable=self.hybrid_var).grid(row=2, column=2, columnspan=2, sticky="w", **pad)
+
+        self.tos_var = tk.BooleanVar(value=self.saved_tos)
+        ttk.Checkbutton(set_frame, text="I agree to the Coqui TTS Terms of Service (coqui.ai/cpml)", variable=self.tos_var).grid(row=3, column=0, columnspan=4, sticky="w", **pad)
 
         # --- Execution Frame ---
         exec_frame = tk.Frame(self.root)
@@ -253,7 +301,28 @@ class DubbingApp:
 
     def start_pipeline(self):
         if self.is_running: return
+
+        # Enforce TOS Agreement
+        if not self.tos_var.get():
+            self.log_queue.put("ERROR: You must agree to the Coqui TTS Terms of Service to start the pipeline.")
+            return
         
+        # --- SAVE SETTINGS ---
+        # Save the HF Token for next time
+        try:
+            with open(CONFIG_FILE, "w") as f:
+                json.dump({"hf_token": self.token_var.get()}, f)
+        except Exception as e:
+            self.log_queue.put(f"Warning: Could not save config: {e}")
+
+        # Save the TOS agreement hidden file
+        os.makedirs(os.path.dirname(TOS_FILE), exist_ok=True)
+        with open(TOS_FILE, "w") as f:
+            f.write("Agreed")
+
+        # Inject into environment for the background workers
+        os.environ["COQUI_TOS_AGREED"] = "1"
+
         v_file = self.video_var.get()
         s_file = self.srt_var.get()
         if not v_file or not s_file:
@@ -354,6 +423,7 @@ class DubbingApp:
 
             self.progress_queue.put(40)
             self.progress_queue.put(40)
+
             # 4. Audit
             log.info("Step 4: Auditing speaker segments for cleanest voice identity...")
             for spk, chunks in speaker_segments.items():
@@ -377,6 +447,31 @@ class DubbingApp:
                 log.info(f" -> Locked identity for {spk} | Length: {len(best_chunk)}ms | Score: {final_score:.2f}")
 
             self.progress_queue.put(50)
+
+            # --- PRE-FETCH TTS MODEL ---
+            xtts_folder_name = "tts_models--multilingual--multi-dataset--xtts_v2"
+
+            # Check the two most common places Coqui saves the model.pth file
+            path_1 = os.path.join(MODELS_DIR, "tts", xtts_folder_name, "model.pth")
+            path_2 = os.path.join(MODELS_DIR, "tts", "tts", xtts_folder_name, "model.pth")
+
+            if os.path.exists(path_1) or os.path.exists(path_2):
+                log.info("Step 4.5: XTTSv2 model already found on disk. Skipping pre-fetch download.")
+            else:
+                log.info("Step 4.5: Pre-fetching TTS Model to prevent worker download conflicts...")
+                from TTS.api import TTS
+
+                # This triggers the safe, single-threaded download
+                _temp_tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2")
+
+                # Delete it immediately to free up system RAM before the workers spawn
+                del _temp_tts
+                import gc
+                gc.collect()
+                log.info("Pre-fetch complete.")
+
+            log.info("Spinning up workers...")
+
             # 5. Parallel Generation
             with open(cfg['srt_file'], 'r', encoding='utf-8') as f:
                 subs = list(srt.parse(f.read()))
@@ -404,6 +499,7 @@ class DubbingApp:
                     log.info(f"Generation Progress: {completed}/{total_subs} lines complete.")
 
             self.progress_queue.put(85)
+
             # 6. Assembly
             log.info("Step 6: Merging generated lines into final track...")
             final_dialogue_track = AudioSegment.silent(duration=len(ja_vocals))
@@ -428,6 +524,7 @@ class DubbingApp:
                         log.error(f"Failed to overlay line {idx}: {e}")
 
             self.progress_queue.put(90)
+
             # 7. Mixing and LUFS Normalization
             log.info("Step 7: Normalizing LUFS and Mixing Audio...")
             final_dialogue_path = os.path.join(TEMP_DIR, "final_dialogue.wav")
@@ -464,6 +561,7 @@ class DubbingApp:
             log.info("Audio Mixing and LUFS Normalization complete!")
 
             self.progress_queue.put(95)
+
             # Step 8. Mux everything together
             log.info("Step 8: Muxing into MKV...")
             run_and_log([
