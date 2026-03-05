@@ -97,6 +97,32 @@ class QueueHandler(logging.Handler):
     def emit(self, record):
         self.log_queue.put(self.format(record))
 
+def run_and_log(cmd, logger):
+    """Runs a subprocess, turns on max verbosity, and streams output live to the logger."""
+    logger.info(f"EXECUTING: {' '.join(cmd)}")
+
+    # Start the process and merge standard error into standard out
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+        universal_newlines=True
+    )
+
+    # Read the output line by line as it generates
+    for line in process.stdout:
+        clean_line = line.strip()
+        if clean_line:
+            # We use debug/info level so it floods the GUI and Log file
+            logger.info(f"[SUBPROCESS] {clean_line}")
+
+    process.wait()
+
+    if process.returncode != 0:
+        raise RuntimeError(f"Command failed with exit code {process.returncode}: {' '.join(cmd)}")
+
 # --- MAIN GUI APP ---
 class DubbingApp:
     def __init__(self, root):
@@ -269,14 +295,19 @@ class DubbingApp:
             # 1. Extraction
             log.info("Step 1: Extracting Audio...")
             full_audio = os.path.join(TEMP_DIR, "full_audio.wav")
-            subprocess.run(["ffmpeg", "-y", "-i", cfg['video_file'], "-map", "0:a:0", full_audio], check=True)
+            run_and_log([
+                "ffmpeg", "-y", "-loglevel", "verbose",
+                "-i", cfg['video_file'], "-map", "0:a:0", full_audio
+            ], log)
 
             self.progress_queue.put(15)
             # 2. Demucs
             log.info("Step 2: Demucs Separation (4-Stem Mode)...")
 
             # Use python -m to ensure it runs explicitly in this environment and catches errors
-            subprocess.run([sys.executable, "-m", "demucs.separate", "-d", "cuda", "-o", TEMP_DIR, full_audio], check=True)
+            run_and_log([
+                sys.executable, "-m", "demucs.separate", "-d", "cuda", "-o", TEMP_DIR, full_audio
+            ], log)
 
             # Fix the pathing so Windows uses proper backslashes
             stem_dir = os.path.join(TEMP_DIR, "htdemucs", "full_audio")
@@ -288,25 +319,27 @@ class DubbingApp:
 
             log.info("Merging non-vocal stems into background track...")
             bg_stem = os.path.join(TEMP_DIR, "final_background_noise.wav")
-            subprocess.run([
-                "ffmpeg", "-y",
+            run_and_log([
+                "ffmpeg", "-y", "-loglevel", "verbose",
                 "-i", os.path.join(stem_dir, "bass.wav"),
                 "-i", os.path.join(stem_dir, "drums.wav"),
                 "-i", os.path.join(stem_dir, "other.wav"),
                 "-filter_complex", "amix=inputs=3:duration=first",
                 bg_stem
-            ], check=True, capture_output=True)
+            ], log)
 
             self.progress_queue.put(30)
             # 3. Diarization
             log.info(f"Step 3: Diarization (Capping at {cfg['max_speakers']} speakers)...")
+            log.info("Running Pyannote AI (This may take a while with no output)...")
             pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", use_auth_token=cfg['token']).to(torch.device("cuda"))
             diarization = pipeline(v_stem, num_speakers=cfg['max_speakers'])
             
             ja_vocals = AudioSegment.from_wav(v_stem)
             speaker_segments, turns = {}, []
 
-            log.info("Extracting diarization timestamps...")
+            log.info("Pyannote finished! Extracting diarization timestamps...")
+            turn_count = 0
             for turn, _, speaker in diarization.itertracks(yield_label=True):
                 start_ms = int(turn.start * 1000)
                 end_ms = int(turn.end * 1000)
@@ -316,13 +349,18 @@ class DubbingApp:
                 if speaker not in speaker_segments:
                     speaker_segments[speaker] = []
                 speaker_segments[speaker].append(chunk)
+                turn_count += 1
+            log.info(f"Extracted {turn_count} total speaking turns across {len(speaker_segments)} identified speakers.")
 
             self.progress_queue.put(40)
+            self.progress_queue.put(40)
             # 4. Audit
-            log.info("Step 4: Auditing speaker segments...")
+            log.info("Step 4: Auditing speaker segments for cleanest voice identity...")
             for spk, chunks in speaker_segments.items():
                 valid_chunks = [c for c in chunks if len(c) > 2000]
-                if not valid_chunks: continue
+                if not valid_chunks:
+                    log.warning(f" -> Speaker {spk} has no valid audio for cloning. Will use fallback.")
+                    continue
 
                 def score_chunk(chunk):
                     rms = chunk.rms
@@ -331,9 +369,12 @@ class DubbingApp:
                     return volume_score * length_bonus
 
                 best_chunk = sorted(valid_chunks, key=score_chunk, reverse=True)[0]
+                final_score = score_chunk(best_chunk)
+
                 if len(best_chunk) > 12000: best_chunk = best_chunk[:12000]
                 clone_path = os.path.join(TEMP_DIR, f"base_clones/{spk}.wav")
                 best_chunk.export(clone_path, format="wav")
+                log.info(f" -> Locked identity for {spk} | Length: {len(best_chunk)}ms | Score: {final_score:.2f}")
 
             self.progress_queue.put(50)
             # 5. Parallel Generation
@@ -353,12 +394,14 @@ class DubbingApp:
                         log.error(res)
                     elif res: 
                         final_results.append(res)
+                        path, start, target_ms, idx = res
+                        log.info(f"[Worker] Successfully generated Line {idx} (Target length: {target_ms}ms)")
                     
                     completed += 1
                     prog = 50 + (completed / total_subs) * 35
                     self.progress_queue.put(prog)
-                    if completed % 10 == 0:
-                        log.info(f"Progress: {completed}/{total_subs} lines generated.")
+                    # Log every single line completion
+                    log.info(f"Generation Progress: {completed}/{total_subs} lines complete.")
 
             self.progress_queue.put(85)
             # 6. Assembly
@@ -369,9 +412,11 @@ class DubbingApp:
             batch_size = 100
             for i in range(0, len(sorted_results), batch_size):
                 batch = sorted_results[i : i + batch_size]
+                log.info(f"Assembling batch {i//batch_size + 1}...")
                 for res in batch:
                     path, start, target_ms, idx = res
                     try:
+                        log.info(f" -> Overlaying Line {idx} at timestamp {start}ms")
                         line_audio = AudioSegment.from_wav(path)
                         if len(line_audio) > (target_ms + 200):
                             ratio = max(0.5, min(len(line_audio)/target_ms, 2.0))
@@ -383,21 +428,51 @@ class DubbingApp:
                         log.error(f"Failed to overlay line {idx}: {e}")
 
             self.progress_queue.put(90)
-            # 7 & 8. Mixing and Muxing
-            log.info("Step 7: Mixing Audio...")
+            # 7. Mixing and LUFS Normalization
+            log.info("Step 7: Normalizing LUFS and Mixing Audio...")
             final_dialogue_path = os.path.join(TEMP_DIR, "final_dialogue.wav")
             mixed_path = os.path.join(TEMP_DIR, "mixed.wav")
             final_movie_path = os.path.join(OUTPUT_DIR, "FINAL_DUBBED_MOVIE.mkv")
 
+            # 7A. Dump the assembled in-memory track to disk
+            log.info("Writing raw assembled dialogue track to disk...")
             final_dialogue_track.export(final_dialogue_path, format="wav")
-            final_bg = AudioSegment.from_wav(bg_stem)
-            final_bg.overlay(final_dialogue_track).export(mixed_path, format="wav")
+
+            # 7B. The FFmpeg Mixing & Normalization Matrix
+            log.info("Passing to FFmpeg for LUFS Normalization and overlay...")
+
+            # The filter graph:
+            # [0:a] is bg_stem -> Normalize to -14 LUFS, True Peak -2.0, name it [bg]
+            # [1:a] is dialogue -> Normalize to -12 LUFS, True Peak -1.0, name it [dialog]
+            # [bg][dialog] -> mix them together, ensuring it lasts the length of the longest track, name it [out]
+            filter_complex = (
+                "[0:a]loudnorm=I=-14:TP=-2.0:LRA=11[bg]; "
+                "[1:a]loudnorm=I=-12:TP=-1.0:LRA=11[dialog]; "
+                "[bg][dialog]amix=inputs=2:duration=longest[out]"
+            )
+
+            run_and_log([
+                "ffmpeg", "-y", "-loglevel", "verbose",
+                "-i", bg_stem,
+                "-i", final_dialogue_path,
+                "-filter_complex", filter_complex,
+                "-map", "[out]",
+                "-ac", "2",  # Force stereo downmix just in case Demucs output was weird
+                mixed_path
+            ], log)
+
+            log.info("Audio Mixing and LUFS Normalization complete!")
 
             self.progress_queue.put(95)
+            # Step 8. Mux everything together
             log.info("Step 8: Muxing into MKV...")
-            subprocess.run(["ffmpeg", "-y", "-i", cfg['video_file'], "-i", mixed_path,
-                            "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "320k",
-                            final_movie_path], capture_output=True)
+            run_and_log([
+                "ffmpeg", "-y", "-loglevel", "verbose",
+                "-i", cfg['video_file'], "-i", mixed_path,
+                "-map", "0:v:0", "-map", "1:a:0",
+                "-c:v", "copy", "-c:a", "aac", "-b:a", "320k",
+                final_movie_path
+            ], log)
             
             self.progress_queue.put(100)
             log.info("--- SUCCESS! Pipeline Complete. ---")
