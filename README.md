@@ -1,4 +1,4 @@
-# AI Auto-Dubbing Studio
+# Python Autodub
 
 An automated, AI-powered video dubbing pipeline that extracts audio, separates vocals from background noise (using Demucs), diarizes speakers (using Pyannote), and generates translated voice clones (using Coqui XTTSv2). It then re-assembles the audio and muxes it back into a final MKV video file.
 
@@ -39,6 +39,7 @@ This software uses a custom build of **FFmpeg** licensed under the [GNU Lesser G
 
 ### Windows
 Double-click `setup.bat` or run it from the command line. This will create a virtual environment named `dub_env` and install all dependencies.
+Or you can also use the `Python-Autodub.exe` found in the project root directory directly.
 *(Note: Ensure you have downloaded and installed FFmpeg and added it to your Windows Environment Variables).*
 
 ### Linux
