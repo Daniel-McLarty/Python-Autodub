@@ -57,7 +57,7 @@ if (!(Test-Path "$ENV_DIR\Scripts\python.exe")) {
 # Using the directory name directly to prevent path-parsing errors
 if (Test-Path $REQUIREMENTS) {
     Write-Host "Syncing dependencies from $REQUIREMENTS..." -ForegroundColor Cyan
-    Invoke-UvCommand "pip install -r $REQUIREMENTS --python $ENV_DIR --extra-index-url https://download.pytorch.org/whl/cu121"
+    Invoke-UvCommand "pip install -r $REQUIREMENTS --python $ENV_DIR --extra-index-url https://download.pytorch.org/whl/cu121 --index-strategy unsafe-best-match"
 }
 
 # 4. Run Target Script
