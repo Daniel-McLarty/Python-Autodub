@@ -37,3 +37,10 @@
 -   Auto-Bootstrapping Engine: Integrated a high-performance PowerShell launcher that automatically handles `uv` installation, Python 3.10 fetching, and virtual environment management on the first run.
 
 -   Hermetic Environment (`dub_env`): The application now builds its own isolated Python environment locally within the project root, ensuring zero interference with existing system-wide Python installs.
+
+## [v1.0.0] - 2026-03-07
+
+### Bug  Fixes
+
+- The Windows exe works without printing incorrect errors to the screen.
+- The Windows exe now saves install state to load quicker on future loads.
