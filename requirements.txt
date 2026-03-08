@@ -158,6 +158,8 @@ cython==3.2.4
     # via
     #   -r base.txt
     #   tts
+darkdetect==0.8.0
+    # via -r base.txt
 dateparser==1.1.8
     # via
     #   -r base.txt
@@ -855,6 +857,8 @@ sudachipy==0.6.10
     #   -r base.txt
     #   spacy
     #   sudachidict-core
+sv-ttk==2.6.1
+    # via -r base.txt
 sympy==1.13.1
     # via
     #   -r base.txt
