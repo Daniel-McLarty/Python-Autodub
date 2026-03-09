@@ -5,7 +5,7 @@
     file, You can obtain one at https://mozilla.org/MPL/2.0/.
     Copyright (C) Daniel McLarty 2026
 
-    Modernized UV Launcher for python-autodub
+    Modernized UV Launcher for python-autodub with MSVC Auto-Install
 #>
 $StartTime = [datetime]::Now
 $ErrorActionPreference = "Continue"
@@ -21,7 +21,56 @@ $BIN_FOLDER = "$WorkDir\bin"
 
 Write-Host "--- Python Autodub Launcher ---" -ForegroundColor Cyan
 
-# 1. Locate or install 'uv'
+# 1. MSVC Build Tools Detection & Installation
+function Test-MSVCBuildTools {
+    # Check using Microsoft's official locator utility
+    $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+    if (-not (Test-Path $vswhere)) { return $false }
+
+    # Query for the specific C++ tools workload
+    $tools = & $vswhere -requires Microsoft.VisualStudio.Workload.VCTools -property installationPath
+    return [bool]$tools
+}
+
+function Install-MSVCBuildTools {
+    Write-Host "[*] Microsoft Visual C++ Build Tools not found." -ForegroundColor Yellow
+    Write-Host "[*] Downloading official installer (this may take a while)..." -ForegroundColor Cyan
+
+    $installerUrl = "https://aka.ms/vs/17/release/vs_buildtools.exe"
+    $installerPath = "$env:TEMP\vs_buildtools.exe"
+
+    Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath
+
+    Write-Host "[*] Installing MSVC Build Tools. Please wait..." -ForegroundColor Cyan
+    Write-Host "[!] A Windows User Account Control (UAC) prompt will appear. Please click 'Yes'." -ForegroundColor Yellow
+
+    # Run the installer passively (shows progress bar, requires no clicks) with UAC elevation
+    $arguments = "--passive --wait --norestart --nocache --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+    $process = Start-Process -FilePath $installerPath -ArgumentList $arguments -Wait -PassThru -Verb RunAs
+
+    if ($process.ExitCode -eq 0 -or $process.ExitCode -eq 3010) {
+        Write-Host "[+] MSVC Build Tools installed successfully!" -ForegroundColor Green
+        if ($process.ExitCode -eq 3010) {
+            Write-Host "[!] A system reboot is recommended by the installer, but we will try to proceed." -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "[-] Installation failed with exit code $($process.ExitCode)." -ForegroundColor Red
+        Write-Host "[-] Please install manually: https://visualstudio.microsoft.com/visual-cpp-build-tools/" -ForegroundColor Red
+        Read-Host "Press Enter to exit..."
+        exit $process.ExitCode
+    }
+
+    Remove-Item $installerPath -ErrorAction SilentlyContinue
+}
+
+Write-Host "[+] Checking C++ Build Environment..." -ForegroundColor Gray
+if (-not (Test-MSVCBuildTools)) {
+    Install-MSVCBuildTools
+} else {
+    Write-Host "[+] MSVC Build Tools are already installed." -ForegroundColor Green
+}
+
+# 2. Locate or install 'uv'
 $uvPath = "uv"
 if (!(Get-Command "uv" -ErrorAction SilentlyContinue)) {
     $localUv = "$env:USERPROFILE\.local\bin\uv.exe"
@@ -34,7 +83,7 @@ if (!(Get-Command "uv" -ErrorAction SilentlyContinue)) {
     }
 }
 
-# 2. Native execution function (Sanitizes streams and handles exit codes)
+# 3. Native execution function (Sanitizes streams and handles exit codes)
 function Invoke-NativeCommand {
     param(
         [string]$Executable,
@@ -67,15 +116,14 @@ function Invoke-NativeCommand {
     }
 }
 
-# 3. Update UV and Sync Environment
+# 4. Update UV and Sync Environment
 Write-Host "[+] Updating uv..." -ForegroundColor Gray
 Invoke-NativeCommand -Executable $uvPath -Arguments "self update" -SkipErrorCheck
 
 Write-Host "[+] Synchronizing dependencies with CUDA 12.1 support..." -ForegroundColor Cyan
-# Added --extra cu121 here
 Invoke-NativeCommand -Executable $uvPath -Arguments "sync --extra cu121"
 
-# 4. Launch the UI Application
+# 5. Launch the UI Application
 if (Test-Path $TARGET_SCRIPT) {
     if (Test-Path $BIN_FOLDER) {
         $env:PATH = "$BIN_FOLDER;" + $env:PATH
@@ -86,7 +134,6 @@ if (Test-Path $TARGET_SCRIPT) {
     Write-Host "`n[!] Launching UI with CUDA 12.1 enabled..." -ForegroundColor Green
     Write-Host "--------------------------------------------------"
 
-    # Added --extra cu121 here as well to ensure the runtime environment matches
     Invoke-NativeCommand -Executable $uvPath -Arguments "run --extra cu121 $TARGET_SCRIPT"
 
     Write-Host "--------------------------------------------------"

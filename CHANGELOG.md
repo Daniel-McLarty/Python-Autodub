@@ -65,5 +65,18 @@
 
 ## [v1.2.0] - 2026-03-09
 
-### New project management system
-* **Everything is UV:** There is now a pyproject.toml file that controls everything.
+### Project Management & Deployment
+* **Everything is UV:** Fully migrated dependency management to a strict `pyproject.toml` standard.
+
+## [v1.2.1] - 2026-03-09
+*(Developer Note: The "Native Build & Audio Polish" Update. Did some bulletproofing of the deployment process for users without development environments. Also fixed some diva behavior from FFmpeg!)*
+
+### Project Management & Deployment
+* **Automated MSVC Build Tools Installer:** The PowerShell launcher now uses `vswhere.exe` to check for C++ build environments. If missing, it automatically downloads and passively installs the required Visual Studio C++ workloads, preventing `uv` from crashing when compiling C-extensions from source.
+
+### Audio Pipeline Improvements
+* **Better Audio Mixing (LUFS Calibration):** Fixed an issue where the background music/noise was aggressively loud. Lowered the background normalization target from `-14 LUFS` to `-26 LUFS`, ensuring the background track sits comfortably underneath the `-12 LUFS` focal dialogue track.
+* **Custom FFmpeg Upgrade:** Updated the minimal MSYS2 FFmpeg build configuration to explicitly include the `atempo` filter (`--enable-filter=...,atempo`), enabling native WSOLA time-stretching while keeping the binary ultra-lightweight.
+
+### Bug Fixes
+* **Resilient Audio Assembly (Step 6):** Fixed a critical bug where the pipeline would silently fail to merge dialogue if FFmpeg couldn't time-stretch a line (resulting in a completely blank dialogue track). Switched `subprocess.run` to `run_and_log` to catch errors, and added a safe fallback that inserts the original, unadjusted TTS audio if the `_adj.wav` file fails to generate.
