@@ -62,3 +62,8 @@
 * **Separation of Concerns:** Broke apart the UI "God Class." Extracted all backend FFmpeg, Demucs, Pyannote, and TTS logic into a dedicated, standalone `DubbingPipeline` class to prevent UI freezing and improve maintainability.
 * **Strict Configuration Typing:** Replaced generic dictionary passing with a `PipelineConfig` dataclass, ensuring strict type-checking and IDE auto-completion for pipeline variables.
 * **Pathlib Migration:** Refactored all internal directory and file management to use Python's built-in `pathlib` instead of `os.path`, eliminating cross-platform slash escaping issues (especially around Demucs).
+
+## [v1.2.0] - 2026-03-09
+
+### New project management system
+* **Everything is UV:** There is now a pyproject.toml file that controls everything.

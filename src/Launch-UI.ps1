@@ -5,8 +5,7 @@
     file, You can obtain one at https://mozilla.org/MPL/2.0/.
     Copyright (C) Daniel McLarty 2026
 
-    Auto-bootstrapping launcher for python-autodub (UI)
-    Fix: Updated 'self-update' to 'self update' and added fault tolerance.
+    Modernized UV Launcher for python-autodub
 #>
 $StartTime = [datetime]::Now
 $ErrorActionPreference = "Continue"
@@ -17,16 +16,12 @@ $WorkDir = if ($MyInvocation.MyCommand.Path) { Split-Path $MyInvocation.MyComman
 Set-Location $WorkDir
 
 # Configuration
-$PYTHON_VERSION = "3.10.19"
-$ENV_DIR = "dub_env"
-$TARGET_SCRIPT = "src\ui.py"
-$REQUIREMENTS = "requirements.txt"
-$HASH_FILE = ".req_hash"
+$TARGET_SCRIPT = "$WorkDir\src\ui.py"
 $BIN_FOLDER = "$WorkDir\bin"
 
-Write-Host "--- AutoDub UI Launcher ---" -ForegroundColor Cyan
+Write-Host "--- Python Autodub Launcher ---" -ForegroundColor Cyan
 
-# 1. Locate or install the 'uv' package manager
+# 1. Locate or install 'uv'
 $uvPath = "uv"
 if (!(Get-Command "uv" -ErrorAction SilentlyContinue)) {
     $localUv = "$env:USERPROFILE\.local\bin\uv.exe"
@@ -39,7 +34,7 @@ if (!(Get-Command "uv" -ErrorAction SilentlyContinue)) {
     }
 }
 
-# 2. Native execution function to sanitize output streams
+# 2. Native execution function (Sanitizes streams and handles exit codes)
 function Invoke-NativeCommand {
     param(
         [string]$Executable,
@@ -49,23 +44,15 @@ function Invoke-NativeCommand {
 
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $Executable
-
-    # Enable colors for uv specifically
-    if ($Executable -like "*uv*") {
-        $psi.Arguments = "$Arguments --color always"
-    } else {
-        $psi.Arguments = $Arguments
-    }
-
+    $psi.Arguments = $Arguments
     $psi.UseShellExecute = $false
     $psi.RedirectStandardOutput = $false
     $psi.RedirectStandardError = $true
     $psi.CreateNoWindow = $false
 
-    # Start the process
     $proc = [System.Diagnostics.Process]::Start($psi)
 
-    # Read the error stream and write to host as information to avoid PowerShell "ERROR:" prefixes
+    # Stream errors to host to avoid red block formatting in PS
     while (!$proc.StandardError.EndOfStream) {
         $line = $proc.StandardError.ReadLine()
         if ($line) { Write-Host $line }
@@ -73,7 +60,6 @@ function Invoke-NativeCommand {
 
     $proc.WaitForExit()
 
-    # Handle non-zero exit codes unless SkipErrorCheck is enabled
     if (-not $SkipErrorCheck -and $proc.ExitCode -ne 0) {
         Write-Host "`n[-] Process failed with exit code $($proc.ExitCode)" -ForegroundColor Red
         Read-Host "Press Enter to exit..."
@@ -81,50 +67,27 @@ function Invoke-NativeCommand {
     }
 }
 
-# 3. Perform self-updates and environment setup
-Write-Host "[+] Checking for uv updates..." -ForegroundColor Gray
+# 3. Update UV and Sync Environment
+Write-Host "[+] Updating uv..." -ForegroundColor Gray
 Invoke-NativeCommand -Executable $uvPath -Arguments "self update" -SkipErrorCheck
 
-Write-Host "[+] Ensuring Python $PYTHON_VERSION..." -ForegroundColor Cyan
-Invoke-NativeCommand -Executable $uvPath -Arguments "python install $PYTHON_VERSION"
+Write-Host "[+] Synchronizing dependencies with CUDA 12.1 support..." -ForegroundColor Cyan
+# Added --extra cu121 here
+Invoke-NativeCommand -Executable $uvPath -Arguments "sync --extra cu121"
 
-if (!(Test-Path "$ENV_DIR\Scripts\python.exe")) {
-    Write-Host "[+] Creating virtual environment..." -ForegroundColor Cyan
-    Invoke-NativeCommand -Executable $uvPath -Arguments "venv $ENV_DIR --python $PYTHON_VERSION"
-}
-
-# 4. Dependency Synchronization with Hash Checking
-if (Test-Path $REQUIREMENTS) {
-    # If the environment folder is missing, force a re-sync
-    if (!(Test-Path $ENV_DIR)) { Remove-Item $HASH_FILE -ErrorAction SilentlyContinue }
-
-    $currentHash = (Get-FileHash $REQUIREMENTS).Hash
-    $oldHash = if (Test-Path $HASH_FILE) { Get-Content $HASH_FILE } else { "" }
-
-    if ($currentHash -ne $oldHash) {
-        Write-Host "[+] Requirements changed. Syncing dependencies..." -ForegroundColor Cyan
-        Invoke-NativeCommand -Executable $uvPath -Arguments "pip install -r $REQUIREMENTS --python $ENV_DIR --extra-index-url https://download.pytorch.org/whl/cu121 --index-strategy unsafe-best-match"
-        $currentHash | Out-File $HASH_FILE -NoNewline
-    } else {
-        Write-Host "[+] Dependencies up to date." -ForegroundColor Green
-    }
-}
-
-# 5. Launch the UI Application
-$envPython = "$WorkDir\$ENV_DIR\Scripts\python.exe"
+# 4. Launch the UI Application
 if (Test-Path $TARGET_SCRIPT) {
-    # Add local bin to PATH to ensure bundled binaries (like FFmpeg) take priority
     if (Test-Path $BIN_FOLDER) {
         $env:PATH = "$BIN_FOLDER;" + $env:PATH
     }
 
     $TotalSetupTime = [Math]::Round(([datetime]::Now - $StartTime).TotalSeconds, 2)
-    Write-Host "[!] Setup took $TotalSetupTime seconds." -ForegroundColor Gray
-    Write-Host "`n[!] Launching UI..." -ForegroundColor Green
+    Write-Host "[!] Environment ready in $TotalSetupTime seconds." -ForegroundColor Gray
+    Write-Host "`n[!] Launching UI with CUDA 12.1 enabled..." -ForegroundColor Green
     Write-Host "--------------------------------------------------"
 
-    # Run the application through the sanitized stream handler
-    Invoke-NativeCommand -Executable $envPython -Arguments "`"$TARGET_SCRIPT`""
+    # Added --extra cu121 here as well to ensure the runtime environment matches
+    Invoke-NativeCommand -Executable $uvPath -Arguments "run --extra cu121 $TARGET_SCRIPT"
 
     Write-Host "--------------------------------------------------"
 } else {
