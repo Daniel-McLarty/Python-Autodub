@@ -127,7 +127,7 @@ Write-Host "[+] Updating uv..." -ForegroundColor Gray
 Invoke-NativeCommand -Executable $uvPath -Arguments "self update" -SkipErrorCheck
 
 Write-Host "[+] Synchronizing dependencies with CUDA 12.1 support..." -ForegroundColor Cyan
-Invoke-NativeCommand -Executable $uvPath -Arguments "sync --extra cu121"
+Invoke-NativeCommand -Executable $uvPath -Arguments "sync --extra cu128"
 
 # 5. Launch the UI Application
 if (Test-Path $TARGET_SCRIPT) {
@@ -140,7 +140,7 @@ if (Test-Path $TARGET_SCRIPT) {
     Write-Host "`n[!] Launching UI with CUDA 12.1 enabled..." -ForegroundColor Green
     Write-Host "--------------------------------------------------"
 
-    Invoke-NativeCommand -Executable $uvPath -Arguments "run --extra cu121 $TARGET_SCRIPT"
+    Invoke-NativeCommand -Executable $uvPath -Arguments "run --extra cu128 $TARGET_SCRIPT"
 
     Write-Host "--------------------------------------------------"
 } else {
