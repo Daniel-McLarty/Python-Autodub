@@ -15,7 +15,6 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=SyntaxWarning)
 
-import queue
 import json
 import logging
 import threading
@@ -30,6 +29,30 @@ from config import CONFIG_FILE, SUPPORTED_LANGS, TEMP_DIR, OUTPUT_DIR, PipelineC
 from utils import QueueHandler
 from pipeline import DubbingPipeline
 
+def run_pipeline_isolated_process(config, log_q, prog_q):
+    """Runs entirely in its own OS memory space. When this dies, RAM goes to 0."""
+    import logging
+    from utils import QueueHandler
+    from pipeline import DubbingPipeline
+
+    # 1. Setup an isolated logger that pushes to the UI's multiprocessing queue
+    proc_logger = logging.getLogger("IsolatedDubLogger")
+    proc_logger.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s', datefmt='%H:%M:%S')
+
+    gui_handler = QueueHandler(log_q)
+    gui_handler.setFormatter(formatter)
+    proc_logger.addHandler(gui_handler)
+
+    log_file = TEMP_DIR / "dubbing_process.log"
+    file_handler = logging.FileHandler(log_file, mode='a')
+    file_handler.setFormatter(formatter)
+    proc_logger.addHandler(file_handler)
+
+    # 2. Run the heavy AI pipeline
+    pipeline = DubbingPipeline(config, proc_logger, prog_q)
+    pipeline.run()
+
 class DubbingApp:
     def __init__(self, root):
         self.root = root
@@ -43,8 +66,8 @@ class DubbingApp:
             except Exception:
                 pass
 
-        self.log_queue = queue.Queue()
-        self.progress_queue = queue.Queue()
+        self.log_queue = mp.Queue()
+        self.progress_queue = mp.Queue()
         self.is_running = False
 
         self.config_data = {
@@ -236,15 +259,21 @@ class DubbingApp:
             force_clean=self.force_clean_var.get()
         )
 
-        thread = threading.Thread(target=self.run_pipeline_thread, args=(config,))
-        thread.daemon = True
-        thread.start()
+        # 1. Launch the heavy pipeline in a totally isolated memory space
+        self.pipeline_process = mp.Process(
+            target=run_pipeline_isolated_process,
+            args=(config, self.log_queue, self.progress_queue)
+        )
+        self.pipeline_process.start()
 
-    def run_pipeline_thread(self, config):
-        pipeline = DubbingPipeline(config, self.logger, self.progress_queue)
-        pipeline.run()
-        self.is_running = False
-        self.root.after(0, lambda: self.start_btn.config(state="normal"))
+        # 2. Use a lightweight thread just to watch the process and reset the UI when it dies
+        def monitor_process():
+            self.pipeline_process.join() # Waits here until the heavy AI process finishes
+            self.is_running = False
+            self.root.after(0, lambda: self.start_btn.config(state="normal"))
+
+        watcher_thread = threading.Thread(target=monitor_process, daemon=True)
+        watcher_thread.start()
 
 if __name__ == "__main__":
     mp.freeze_support()

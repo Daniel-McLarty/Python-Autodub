@@ -126,7 +126,7 @@ function Invoke-NativeCommand {
 Write-Host "[+] Updating uv..." -ForegroundColor Gray
 Invoke-NativeCommand -Executable $uvPath -Arguments "self update" -SkipErrorCheck
 
-Write-Host "[+] Synchronizing dependencies with CUDA 12.1 support..." -ForegroundColor Cyan
+Write-Host "[+] Synchronizing dependencies with CUDA 12.8 support..." -ForegroundColor Cyan
 Invoke-NativeCommand -Executable $uvPath -Arguments "sync --extra cu128"
 
 # 5. Launch the UI Application
@@ -137,7 +137,8 @@ if (Test-Path $TARGET_SCRIPT) {
 
     $TotalSetupTime = [Math]::Round(([datetime]::Now - $StartTime).TotalSeconds, 2)
     Write-Host "[!] Environment ready in $TotalSetupTime seconds." -ForegroundColor Gray
-    Write-Host "`n[!] Launching UI with CUDA 12.1 enabled..." -ForegroundColor Green
+    Write-Host "`n[!] Launching UI with CUDA 12.8 enabled..." -ForegroundColor Green
+    Write-Host "`n[!] Note: The first launch may take a moment as the application initializes and compiles necessary components." -ForegroundColor Yellow
     Write-Host "--------------------------------------------------"
 
     Invoke-NativeCommand -Executable $uvPath -Arguments "run --extra cu128 $TARGET_SCRIPT"

@@ -30,8 +30,7 @@ def dub_worker_standalone(args):
     targ_path = TEMP_DIR / "temp_lines" / f"line_{sub_item.index}.wav"
     
     if targ_path.exists():
-        # Remember to return duration (0 here is just a placeholder if it already exists,
-        # but better to calculate actual ms duration)
+        # Better to return actual calculated ms duration
         return (str(targ_path), int(sub_item.start.total_seconds() * 1000),
                 int((sub_item.end - sub_item.start).total_seconds() * 1000), sub_item.index, clean_text)
 
@@ -51,10 +50,8 @@ def dub_worker_standalone(args):
         scene_text = ""
 
         if max_speakers == 1:
-            # Bypass all math. Force SPEAKER_00 and never fail to generic.
             current_speaker = "SPEAKER_00"
             for turn in speaker_turns:
-                # Grab text for hybrid mode if it overlaps at all
                 if max(0, min(end_ms, turn['end']) - max(start_ms, turn['start'])) > 0:
                     scene_text += turn.get('text', "") + " "
         else:
@@ -62,7 +59,6 @@ def dub_worker_standalone(args):
             speaker_overlaps = {}
             scene_texts = {}
 
-            # Calculate total overlap per speaker in this timeframe
             for turn in speaker_turns:
                 overlap = max(0, min(end_ms, turn['end']) - max(start_ms, turn['start']))
                 if overlap > 0:
@@ -74,7 +70,6 @@ def dub_worker_standalone(args):
                         scene_texts[spk].append(turn['text'])
                 if turn['start'] > end_ms: break
 
-            # Sort speakers by who talked the most in this slot
             sorted_spks = sorted(speaker_overlaps.items(), key=lambda x: x[1], reverse=True)
 
             if sorted_spks:
@@ -85,29 +80,38 @@ def dub_worker_standalone(args):
                 if len(sorted_spks) > 1:
                     runner_up_ratio = sorted_spks[1][1] / duration
 
-                # Check if the top speaker beats the runner-up by the user's defined margin (conf_thresh)
-                # E.g., 21% - 10% = 11%. If conf_thresh is 0.10, this passes!
                 if (top_ratio - runner_up_ratio) >= conf_thresh:
                     current_speaker = top_spk
                     scene_text = " ".join(scene_texts[top_spk])
 
-        # --- BASE CLONE SELECTION ---
+        # --- BASE CLONE SELECTION (WITH 2-SECOND ENFORCEMENT) ---
         base_text = ""
-        # The generic fallback now ONLY triggers if max_speakers > 1 AND the margin test failed
-        if not current_speaker:
+        ref_path = None
+
+        if current_speaker:
+            temp_ref = TEMP_DIR / "base_clones" / f"{current_speaker}.wav"
+            temp_txt = TEMP_DIR / "base_clones" / f"{current_speaker}.txt"
+
+            if temp_ref.exists() and temp_txt.exists():
+                # STRICT CHECK: Ensure the clone is at least 2.0 seconds long to prevent F5-TTS from generating garbage!
+                clone_info = sf.info(str(temp_ref))
+                if (clone_info.frames / clone_info.samplerate) >= 2.0:
+                    ref_path = temp_ref
+                    with open(temp_txt, "r", encoding="utf-8") as f:
+                        base_text = f.read().strip()
+
+        # If it's a generic speaker, OR the clone file went missing, OR the clone was less than 2 seconds long
+        if not ref_path:
             current_snippet, _ = sf.read(orig_path, start=start_frame, stop=end_frame)
             detected_gender = estimate_gender_from_pitch(current_snippet, sr)
             ref_path = SCRIPT_DIR / f"generic_{detected_gender}.wav"
             txt_path = SCRIPT_DIR / f"generic_{detected_gender}.txt"
+
             if txt_path.exists():
                 with open(txt_path, "r", encoding="utf-8") as f:
                     base_text = f.read().strip()
-        else:
-            ref_path = TEMP_DIR / "base_clones" / f"{current_speaker}.wav"
-            txt_path = TEMP_DIR / "base_clones" / f"{current_speaker}.txt"
-            if txt_path.exists():
-                with open(txt_path, "r", encoding="utf-8") as f:
-                    base_text = f.read().strip()
+            else:
+                base_text = "This is a generic fallback voice."
 
         final_ref_path = str(ref_path)
         final_ref_text = base_text
@@ -117,7 +121,6 @@ def dub_worker_standalone(args):
             base_audio, b_sr = sf.read(str(ref_path))
             scene_audio, _ = sf.read(orig_path, start=start_frame, stop=end_frame)
 
-            # Ensure snippet matches base channels
             if len(base_audio.shape) == 1 and len(scene_audio.shape) > 1:
                 scene_audio = scene_audio.mean(axis=1)
 
@@ -125,7 +128,6 @@ def dub_worker_standalone(args):
             temp_ref_wav = TEMP_DIR / "temp_lines" / f"ref_{sub_item.index}.wav"
             sf.write(temp_ref_wav, hybrid_audio, b_sr)
 
-            # Combine the texts (Base Transcript + Source Transcript of the current scene)
             final_ref_text = f"{base_text} {scene_text}".strip()
             final_ref_path = str(temp_ref_wav)
 
@@ -137,7 +139,6 @@ def dub_worker_standalone(args):
                 gen_text=clean_text
             )
 
-        # F5-TTS returns (wav, sr, spectrogram), so we safely grab just the first two
         wav = infer_result[0]
         gen_sr = infer_result[1]
 
@@ -145,5 +146,6 @@ def dub_worker_standalone(args):
         sf.write(str(targ_path), wav_trimmed, gen_sr)
         
         return (str(targ_path), start_ms, duration, sub_item.index, clean_text)
+    
     except Exception as e:
         return f"Line {sub_item.index} Error: {str(e)}"
