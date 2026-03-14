@@ -13,13 +13,12 @@ from utils import estimate_gender_from_pitch
 
 worker_model = None
 
-def init_worker():
+def init_worker(device_str):
     global worker_model
     from f5_tts.api import F5TTS
-    worker_model = F5TTS(device="cuda")
+    worker_model = F5TTS(device=device_str)
 
 def dub_worker_standalone(args):
-    # Unpack the new max_speakers argument
     sub_item, speaker_turns, orig_path, use_hybrid, conf_thresh, target_lang, max_speakers = args
     global worker_model
 

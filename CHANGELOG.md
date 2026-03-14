@@ -155,3 +155,14 @@ Version 2.0.0 is a complete architectural rebuild of the Python Autodub pipeline
 -   Scoping Error Fix: Removed a rogue `import librosa` sitting inside the Step 3 loop that was causing variable assignment crashes in earlier steps.
 
 -   Tqdm Log Spam: The `HFDownloadLogger` interceptor was tuned to cleanly catch and format `stderr` outputs without double-printing carriage returns.
+
+## [2.2.0] - 2026-03-13
+
+### Added
+- **CPU Fallback Mode:** The pipeline will now automatically detect if a compatible GPU is missing and route all tensor operations (Demucs, WhisperX, F5-TTS) to the CPU.
+- **Hardware-Aware Initialization:** Independent worker processes now dynamically receive the correct device string (`cuda` or `cpu`) upon spawning.
+
+### Changed
+- **System Checks:** Replaced hard-stops on missing GPUs with a dynamic hardware check and a severe console warning regarding CPU execution times.
+- **VRAM Management:** Refactored garbage collection and cache clearing (`torch.cuda.empty_cache()`) to be hardware-agnostic, preventing crashes on non-NVIDIA systems.
+- **AMD Support Clarification:** Linux users with AMD GPUs can now run the pipeline at full speed natively by *manually* installing the PyTorch ROCm wheels (the pipeline will automatically map it to the `cuda` backend).
