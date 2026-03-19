@@ -23,13 +23,19 @@ Write-Host "--- Python Autodub Launcher ---" -ForegroundColor Cyan
 
 # 1. MSVC Build Tools Detection & Installation
 function Test-MSVCBuildTools {
-    # Check using Microsoft's official locator utility
     $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
     if (-not (Test-Path $vswhere)) { return $false }
 
-    # Query for the specific C++ tools workload
-    $tools = & $vswhere -requires Microsoft.VisualStudio.Workload.VCTools -property installationPath
-    return [bool]$tools
+    $tools = & $vswhere -latest -products * -version "[17.0,18.0)" -requires Microsoft.VisualStudio.Workload.VCTools -property installationPath
+
+    # Check if we actually got a path string back
+    if ($null -ne $tools -and $tools.Trim() -ne "") {
+        $shortPath = Split-Path $tools -Leaf
+        Write-Host "[+] Found MSVC environment in: $shortPath" -ForegroundColor Gray
+        return $true
+    }
+
+    return $false
 }
 
 function Install-MSVCBuildTools {

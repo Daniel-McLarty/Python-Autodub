@@ -80,3 +80,9 @@
 
 ### Bug Fixes
 * **Resilient Audio Assembly (Step 6):** Fixed a critical bug where the pipeline would silently fail to merge dialogue if FFmpeg couldn't time-stretch a line (resulting in a completely blank dialogue track). Switched `subprocess.run` to `run_and_log` to catch errors, and added a safe fallback that inserts the original, unadjusted TTS audio if the `_adj.wav` file fails to generate.
+
+## [1.2.2] - 2026-03-11
+
+### Bug Fixes
+* **Build Environment:** Fixed a bug in Test-MSVCBuildTools where the script failed to detect existing Visual Studio Community/Pro/Enterprise installations, causing redundant downloads of MSVC Build Tools.
+* **Detection Logic:** Updated vswhere query to use the -products * flag and version pinning [17.0, 18.0) to correctly identify Visual Studio 2022 environments.
