@@ -5,7 +5,7 @@
 
 [project]
 name = "python-autodub"
-version = "2.2.0"
+version = "2.2.1"
 description = "Python Autodub Studio: AI-Powered Auto-Dubbing Software"
 license = { text = "MPL-2.0" }
 authors = [

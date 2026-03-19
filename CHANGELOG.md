@@ -166,3 +166,8 @@ Version 2.0.0 is a complete architectural rebuild of the Python Autodub pipeline
 - **System Checks:** Replaced hard-stops on missing GPUs with a dynamic hardware check and a severe console warning regarding CPU execution times.
 - **VRAM Management:** Refactored garbage collection and cache clearing (`torch.cuda.empty_cache()`) to be hardware-agnostic, preventing crashes on non-NVIDIA systems.
 - **AMD Support Clarification:** Linux users with AMD GPUs can now run the pipeline at full speed natively by *manually* installing the PyTorch ROCm wheels (the pipeline will automatically map it to the `cuda` backend).
+
+## [2.2.1] - 2026-03-16
+
+## Bug Fixes
+- **Fixed FFMPEG Missing SRT Support:** FFMPEG now built with SRT support, will not crash on the last step anymore.

@@ -11,7 +11,7 @@ Compiler: gcc 15.2.0 (Rev8, Built by MSYS2 project)
 
 Configuration Flags:
 --------------------
-configuration: --prefix=./build --arch=x86_64 --target-os=mingw32 --cc=gcc --pkg-config-flags=--static --extra-ldflags=-static --enable-static --disable-shared --disable-all --enable-ffmpeg --enable-avcodec --enable-avformat --enable-avfilter --enable-swresample --enable-protocol=file --enable-filter='loudnorm,aresample,amix,volume,pan,atempo' --enable-demuxer='mov,matroska,wav,aac,mp3,flac' --enable-muxer='matroska,mov,mp4,wav,flac' --enable-decoder='aac,mp3,pcm_s16le,h264,hevc,vp9,flac' --enable-encoder='pcm_s16le,aac,flac' --disable-debug --disable-doc --disable-gpl --disable-nonfree --disable-network
+configuration: --prefix=./build --arch=x86_64 --target-os=mingw32 --cc=gcc --pkg-config-flags=--static --extra-ldflags=-static --enable-static --disable-shared --disable-all --enable-ffmpeg --enable-avcodec --enable-avformat --enable-avfilter --enable-swresample --enable-protocol=file --enable-filter='loudnorm,aresample,amix,volume,pan,atempo' --enable-demuxer='mov,matroska,wav,aac,mp3,flac,srt' --enable-muxer='matroska,mov,mp4,wav,flac' --enable-decoder='aac,mp3,pcm_s16le,h264,hevc,vp9,flac,srt' --enable-encoder='pcm_s16le,aac,flac,srt' --disable-debug --disable-doc --disable-gpl --disable-nonfree --disable-network
 
 Build Notes:
 ------------
