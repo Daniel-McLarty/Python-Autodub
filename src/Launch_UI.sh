@@ -61,7 +61,7 @@ fi
 echo -e "${GRAY}[+] Updating uv...${NC}"
 "$UV_PATH" self update || true
 
-echo -e "${CYAN}[+] Synchronizing dependencies with CUDA 12.1 support...${NC}"
+echo -e "${CYAN}[+] Synchronizing dependencies with CUDA 12.8 support...${NC}"
 if ! "$UV_PATH" sync --extra cu128; then
     echo -e "\n${RED}[-] Process failed during sync.${NC}"
     read -r -p "Press Enter to exit..."
@@ -78,7 +78,8 @@ if [ -f "$TARGET_SCRIPT" ]; then
     TOTAL_TIME=$((END_TIME - START_TIME))
 
     echo -e "${GRAY}[!] Environment ready in ${TOTAL_TIME} seconds.${NC}"
-    echo -e "\n${GREEN}[!] Launching UI with CUDA 12.1 enabled...${NC}"
+    echo -e "\n${GREEN}[!] Launching UI with CUDA 12.8 enabled...${NC}"
+    echo -e "\n${YELLOW}[!] Note: The first launch may take a moment as the application initializes and compiles necessary components.${NC}"
     echo "--------------------------------------------------"
 
     if ! "$UV_PATH" run --extra cu128 "$TARGET_SCRIPT"; then

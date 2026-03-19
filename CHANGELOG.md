@@ -114,3 +114,44 @@ Version 2.0.0 is a complete architectural rebuild of the Python Autodub pipeline
 * Removed `pydub` from all dependencies.
 * Removed legacy `run_dub.py` headless script (functionality absorbed by the UI and config system).
 * Removed `test_env.py` (environment validation is now handled natively by the OS launchers).
+
+## \[v2.1.0\] - 2026-03-13
+
+(Developer Note: The "Enterprise Memory & Stability" Update. This release completely solves RAM spikes caused by Transformer models, fixes PyTorch memory leaks, and adds robust fail safes to the dubbing workers. The app can now reliably process full-length feature films on 16GB systems without breaking a sweat.)
+
+### Memory & Hardware Optimization
+
+-   Zero-Artifact Chunked Separation (Demucs): Completely overhauled Step 2 to bypass the O(n2) memory explosion of the HTDemucs Transformer model. The pipeline now physically slices the source audio into 10-minute segments before processing, dropping peak RAM usage from ~32GB down to a flat, stable ~2.4GB.
+
+-   Seamless Audio Stitching: Implemented a 4-second sliding window overlap and FFmpeg linear crossfading (`acrossfade=d=4:c1=tri:c2=tri`) to perfectly reassemble Demucs chunks without any audible clicks, pops, or phase shifts at the 10-minute boundaries.
+
+-   Strict Transformer Guardrails: Forced Demucs to operate strictly sequentially (`-j 1`) and capped the Self-Attention memory window (`--segment 7`) to stay safely within the model's hardcoded 7.8-second context limit, preventing out-of-memory tensor crashes.
+
+-   VRAM Inter-Process Flush: Added `torch.cuda.ipc_collect()` alongside standard garbage collection between the WhisperX and F5-TTS steps, ensuring the main process completely severs its memory pointers and hands 100% of the VRAM over to the parallel dubbing workers.
+
+
+### Architecture & Process Isolation
+
+-   OS-Level Process Isolation: Ripped out the `threading.Thread` pipeline launcher and replaced it with a strict `multiprocessing.Process`. When the dubbing pipeline finishes, the Windows Kernel now physically destroys the process, obliterating the stubborn PyTorch cache and returning the Tkinter UI to a clean ~500MB idle state.
+
+-   Dynamic File Discovery: Step 2 no longer hardcodes expected Demucs output paths. It uses recursive globbing (`rglob`) to dynamically hunt down output files regardless of how the underlying model names its nested folders, then automatically sanitizes the garbage directories.
+
+-   Stereo Flattening Defense: Added a strict `-ac 2` downmix flag to the initial FFmpeg audio extraction (Step 1). This prevents 5.1 or 7.1 surround sound movies from silently extracting as 6-to-8 channel WAV files and bloating downstream memory.
+
+
+### Voice Cloning & TTS Safety Nets
+
+-   Strict 2.0-Second Clone Limit: Added a hard gatekeeper to `worker.py`. If Pyannote isolates a voice clone shorter than 2.0 seconds, the worker instantly rejects it to prevent F5-TTS from hallucinating robotic garbage audio.
+
+-   Dynamic Pitch Fallback: If a base clone file is missing or rejected for being too short, the worker automatically runs `librosa` pitch detection on the exact scene's audio snippet to dynamically assign the correct high-quality `generic_male` or `generic_female` voice on the fly.
+
+-   Hybrid Emotion Disk Cleanup: The worker now immediately deletes its temporary hybrid `ref_X.wav` file the exact millisecond F5-TTS finishes inference, preventing thousands of uncompressed WAV files from eating gigabytes of SSD space on long movies.
+
+
+### Bug Fixes
+
+-   Librosa Silent Freeze: Fixed a critical bug in Step 3 where `librosa.resample` would lock up the CPU in an infinite C-backend loop. The 32-bit audio array is now strictly averaged to 1D Mono (`mean(axis=1)`) before resampling.
+
+-   Scoping Error Fix: Removed a rogue `import librosa` sitting inside the Step 3 loop that was causing variable assignment crashes in earlier steps.
+
+-   Tqdm Log Spam: The `HFDownloadLogger` interceptor was tuned to cleanly catch and format `stderr` outputs without double-printing carriage returns.

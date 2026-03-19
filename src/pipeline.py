@@ -88,119 +88,224 @@ class DubbingPipeline:
             else: log.info("Audio already extracted. Skipping.")
             self.progress_queue.put(15)
 
-            # --- STEP 2: DEMUCS ---
-            log.info("Step 2: Demucs Separation (4-Stem Mode)...")
-            stem_dir = TEMP_DIR / "htdemucs" / "full_audio"
-            v_stem = stem_dir / "vocals.wav"
+            # --- STEP 2: CHUNKED DEMUCS ---
+            log.info("Step 2: Demucs Separation")
+
+            v_stem = TEMP_DIR / "vocals.wav"
             bg_stem = TEMP_DIR / "final_background_noise.wav"
+            chunk_dir = TEMP_DIR / "demucs_chunks"
+            chunk_dir.mkdir(exist_ok=True)
 
             if not v_stem.exists():
-                run_and_log([sys.executable, "-m", "demucs.separate", "-d", "cuda", "-o", TEMP_DIR, full_audio], log)
-                if not v_stem.exists(): raise FileNotFoundError("Demucs failed silently!")
-                
-                log.info("Merging non-vocal stems into background track...")
-                run_and_log([
-                    "ffmpeg", "-y", "-loglevel", "verbose",
-                    "-i", stem_dir / "bass.wav", "-i", stem_dir / "drums.wav", "-i", stem_dir / "other.wav",
-                    "-filter_complex", "amix=inputs=3:duration=first", bg_stem
-                ], log)
-            else: log.info("Stems already isolated. Skipping.")
-            self.progress_queue.put(30)
+                f_info = sf.info(str(full_audio))
+                duration = f_info.frames / f_info.samplerate
 
-            # --- STEP 3: WHISPERX ---
-            log.info(f"Step 3: WhisperX Alignment & Diarization (Max {self.cfg.max_speakers} speakers)...")
-            audio = whisperx.load_audio(str(v_stem))
+                chunk_len = 600  # 10 minutes
+                overlap = 4      # 4 seconds of overlap for the crossfade buffer
+                
+                processed_v_chunks = []
+                processed_bg_chunks = []
+
+                # 1. Process with Overlap
+                start = 0
+                idx = 0
+                while start < duration:
+                    end = min(start + chunk_len + overlap, duration)
+                    c_input = chunk_dir / f"in_{idx:03d}.wav"
+
+                    # Extract chunk with overlap
+                    run_and_log([
+                        "ffmpeg", "-y", "-ss", str(start), "-to", str(end),
+                        "-i", str(full_audio), "-c", "copy", str(c_input)
+                    ], log)
+
+                    # Run Demucs on the small chunk
+                    run_and_log([
+                        sys.executable, "-m", "demucs.separate", "-n", "htdemucs",
+                        "-d", "cuda", "--two-stems", "vocals", "--segment", "7", "-j", "1",
+                        "-o", str(chunk_dir), str(c_input)
+                    ], log)
+
+                    # Move results and track them
+                    out_path = chunk_dir / "htdemucs" / f"in_{idx:03d}"
+                    v_chunk = chunk_dir / f"v_{idx:03d}.wav"
+                    bg_chunk = chunk_dir / f"bg_{idx:03d}.wav"
+
+                    import shutil
+                    shutil.move(str(out_path / "vocals.wav"), str(v_chunk))
+                    shutil.move(str(out_path / "no_vocals.wav"), str(bg_chunk))
+
+                    processed_v_chunks.append(v_chunk)
+                    processed_bg_chunks.append(bg_chunk)
+
+                    if end >= duration: break
+                    start += chunk_len
+                    idx += 1
+
+                # 2. Seamless Reassembly using FFmpeg Crossfade
+                def stitch_stems(chunks, output_path):
+                    if len(chunks) == 1:
+                        shutil.move(str(chunks[0]), str(output_path))
+                        return
+
+                    # Construct a complex filter graph to crossfade all chunks sequentially
+                    # This prevents the "10-minute click"
+                    filter_str = ""
+                    for i in range(len(chunks) - 1):
+                        if i == 0:
+                            filter_str += f"[0][1]acrossfade=d={overlap}:c1=tri:c2=tri[a1];"
+                        else:
+                            filter_str += f"[a{i}][{i+1}]acrossfade=d={overlap}:c1=tri:c2=tri[a{i+1}];"
+
+                    inputs = []
+                    for c in chunks: inputs.extend(["-i", str(c)])
+
+                    last_label = f"[a{len(chunks)-1}]"
+                    run_and_log(["ffmpeg", "-y"] + inputs + ["-filter_complex", filter_str, "-map", last_label, str(output_path)], log)
+
+                log.info("Stitching stems with 4-second linear crossfades...")
+                stitch_stems(processed_v_chunks, v_stem)
+                stitch_stems(processed_bg_chunks, bg_stem)
+
+                shutil.rmtree(chunk_dir, ignore_errors=True)
+            else:
+                log.info("Stems already isolated. Skipping.")
+
+            # --- STEP 3: CHUNKED WHISPERX ALIGNMENT & DIARIZATION ---
+            log.info(f"Step 3: Chunked Alignment & Diarization (Max {self.cfg.max_speakers} speakers per segment)...")
+
+            orig_vocals, sr = sf.read(str(v_stem), dtype='float32')
+
+            if len(orig_vocals.shape) > 1:
+                orig_vocals = orig_vocals.mean(axis=1)
+
+            total_duration_samples = len(orig_vocals)
+
             with open(self.cfg.source_srt_file, 'r', encoding='utf-8') as f:
                 src_subs = list(srt.parse(f.read()))
+            # Map target subtitles by index so we can attach them to the correct chunks
+            with open(self.cfg.target_srt_file, 'r', encoding='utf-8') as f:
+                tgt_subs = {sub.index: sub for sub in list(srt.parse(f.read()))}
 
-            word_segments = [{"text": sub.content.replace('\n', ' '), "start": sub.start.total_seconds(), "end": sub.end.total_seconds()} for sub in src_subs]
+            # --- Create 10-Minute SRT Packages ---
+            CHUNK_SIZE = 600.0
+            chunks = []
+            current_chunk_subs = []
+            current_chunk_start = max(0.0, src_subs[0].start.total_seconds() - 1.0) if src_subs else 0.0
 
+            for sub in src_subs:
+                sub_start = sub.start.total_seconds()
+                # Split precisely on an SRT boundary if we cross the 10-min mark
+                if sub_start - current_chunk_start > CHUNK_SIZE and current_chunk_subs:
+                    chunk_end = current_chunk_subs[-1].end.total_seconds() + 1.0
+                    chunks.append({"start": current_chunk_start, "end": chunk_end, "subs": current_chunk_subs})
+                    current_chunk_start = max(0.0, sub_start - 1.0)
+                    current_chunk_subs = [sub]
+                else:
+                    current_chunk_subs.append(sub)
+
+            if current_chunk_subs:
+                chunks.append({"start": current_chunk_start, "end": current_chunk_subs[-1].end.total_seconds() + 1.0, "subs": current_chunk_subs})
+
+            # --- Initialize Models Once ---
             with HFDownloadLogger(log):
                 model_a, metadata = whisperx.load_align_model(language_code=self.cfg.source_lang, device="cuda")
-                aligned_result = whisperx.align(word_segments, model_a, metadata, audio, "cuda", return_char_alignments=False)
-
                 if self.cfg.max_speakers > 1:
                     from whisperx.diarize import DiarizationPipeline
                     diarize_model = DiarizationPipeline(token=self.cfg.token, device="cuda")
-                    diarize_segments = diarize_model(audio, min_speakers=1, max_speakers=self.cfg.max_speakers)
-                    final_result = whisperx.assign_word_speakers(diarize_segments, aligned_result)
+
+            master_worker_args = []
+            speaker_segments = {}
+
+            # --- Loop Through Packages ---
+            for i, chunk in enumerate(chunks):
+                log.info(f"Processing Section {i+1}/{len(chunks)} ({chunk['start']:.1f}s to {chunk['end']:.1f}s)...")
+                c_start, c_end = chunk["start"], chunk["end"]
+
+                # Slice 32-bit audio for this specific chunk
+                start_sample = max(0, int(c_start * sr))
+                end_sample = min(total_duration_samples, int(c_end * sr))
+                chunk_audio = orig_vocals[start_sample:end_sample]
+
+                if len(chunk_audio) == 0: continue
+
+                # Resample chunk to 16kHz specifically for WhisperX to process
+                chunk_audio_16k = librosa.resample(chunk_audio, orig_sr=sr, target_sr=16000)
+
+                # Offset SRT timestamps to zero for the aligner
+                offset_chunk = [{"text": s.content.replace('\n', ' '), "start": max(0.0, s.start.total_seconds() - c_start), "end": max(0.0, s.end.total_seconds() - c_start)} for s in chunk["subs"]]
+
+                aligned_chunk = whisperx.align(offset_chunk, model_a, metadata, chunk_audio_16k, "cuda", return_char_alignments=False)
+
+                if self.cfg.max_speakers > 1:
+                    diarize_segments = diarize_model(chunk_audio_16k, min_speakers=1, max_speakers=self.cfg.max_speakers)
+                    chunk_result = whisperx.assign_word_speakers(diarize_segments, aligned_chunk)
                 else:
-                    log.info("Max speakers is 1. Skipping diarization model to save VRAM and assigning 'SPEAKER_00'.")
-                    final_result = {"segments": []}
-                    for seg in aligned_result["segments"]:
-                        seg["speaker"] = "SPEAKER_00"
-                        final_result["segments"].append(seg)
+                    chunk_result = aligned_chunk
+                    for seg in chunk_result["segments"]: seg["speaker"] = "SPEAKER_00"
 
-            orig_vocals, sr = sf.read(str(v_stem))
-            speaker_segments, turns = {}, []
+                # Process clones and absolute turns for this chunk
+                chunk_turns = []
+                for segment in chunk_result.get("segments", []):
+                    if "speaker" not in segment: continue
+                    # Prepend Chunk ID to completely isolate Pyannote logic per 10-min block
+                    speaker = f"C{i}_{segment['speaker']}"
 
-            for segment in final_result.get("segments", []):
-                if "speaker" not in segment: continue
-                speaker = segment["speaker"]
-                start_ms = int(segment["start"] * 1000)
-                end_ms = int(segment["end"] * 1000)
-                segment_text = segment.get("text", "").strip()
+                    # Worker.py requires absolute milliseconds for overlap math
+                    abs_start_ms = int((segment["start"] + c_start) * 1000)
+                    abs_end_ms = int((segment["end"] + c_start) * 1000)
+                    segment_text = segment.get("text", "").strip()
 
-                turns.append({
-                    'start': start_ms,
-                    'end': end_ms,
-                    'speaker': speaker,
-                    'text': segment_text
-                })
+                    chunk_turns.append({'start': abs_start_ms, 'end': abs_end_ms, 'speaker': speaker, 'text': segment_text})
 
-                # Calculate numpy array indices
-                start_frame = int((start_ms / 1000) * sr)
-                end_frame = int((end_ms / 1000) * sr)
-                chunk = orig_vocals[start_frame:end_frame]
+                    # Calculate numpy array indices using original 32-bit audio
+                    s_frame = int(segment["start"] * sr)
+                    e_frame = int(segment["end"] * sr)
+                    audio_snippet = chunk_audio[s_frame:e_frame]
 
-                if speaker not in speaker_segments: speaker_segments[speaker] = []
-                speaker_segments[speaker].append({
-                    "audio": chunk,
-                    "text": segment_text,
-                    "length_frames": len(chunk)
-                })
+                    if speaker not in speaker_segments: speaker_segments[speaker] = []
+                    speaker_segments[speaker].append({"audio": audio_snippet, "text": segment_text, "length_frames": len(audio_snippet)})
+
+                # Attach TARGET translations to this chunk's timing data
+                for sub in chunk["subs"]:
+                    tgt_sub = tgt_subs.get(sub.index)
+                    if tgt_sub:
+                        master_worker_args.append((tgt_sub, chunk_turns, str(v_stem), self.cfg.hybrid, self.cfg.confidence, self.cfg.target_lang, self.cfg.max_speakers))
 
             log.info("Freeing WhisperX VRAM to make room for F5-TTS...")
             try:
                 del model_a
-                if self.cfg.max_speakers > 1:
-                    del diarize_model
+                if self.cfg.max_speakers > 1: del diarize_model
             except Exception: pass
-
-            import gc
-            gc.collect()
-            torch.cuda.empty_cache()
+            import gc; gc.collect(); torch.cuda.empty_cache()
 
             self.progress_queue.put(40)
 
             # --- STEP 4: AUDIT ---
             log.info("Step 4: Auditing speaker segments & writing transcripts...")
-            for spk, chunks in speaker_segments.items():
+            for spk, snippets in speaker_segments.items():
                 clone_path = TEMP_DIR / "base_clones" / f"{spk}.wav"
                 text_path = TEMP_DIR / "base_clones" / f"{spk}.txt"
                 if clone_path.exists(): continue
 
-                # If Hybrid is ON, we want a smaller base clone (max 7s) to leave room for the scene audio.
-                # If Hybrid is OFF, we can safely use up to 12s.
                 max_frames = (7 * sr) if self.cfg.hybrid else (12 * sr)
                 min_frames = 2 * sr
-
-                valid_chunks = [c for c in chunks if min_frames < c["length_frames"] <= max_frames]
+                valid_chunks = [c for c in snippets if min_frames < c["length_frames"] <= max_frames]
 
                 if not valid_chunks:
-                    fallback_chunks = [c for c in chunks if c["length_frames"] > min_frames]
-                    if not fallback_chunks: continue
-                    best_chunk = sorted(fallback_chunks, key=lambda x: x["length_frames"])[0]
+                    fallback = [c for c in snippets if c["length_frames"] > min_frames]
+                    if not fallback: continue
+                    best_chunk = sorted(fallback, key=lambda x: x["length_frames"])[0]
                 else:
                     best_chunk = sorted(valid_chunks, key=lambda x: x["length_frames"], reverse=True)[0]
 
                 sf.write(str(clone_path), best_chunk["audio"], sr)
-                with open(text_path, "w", encoding="utf-8") as f:
-                    f.write(best_chunk["text"])
+                with open(text_path, "w", encoding="utf-8") as f: f.write(best_chunk["text"])
+
             self.progress_queue.put(50)
 
             # --- STEP 5: PARALLEL GENERATION ---
-            log.info("Step 5: Pre-fetching/Verifying F5-TTS Models...")
+            log.info("Step 4.5: Pre-fetching/Verifying F5-TTS Models...")
 
             # Wrap the F5-TTS loading in the interceptor to capture any HF downloads and log them!
             with HFDownloadLogger(log):
@@ -209,22 +314,20 @@ class DubbingPipeline:
                 del _temp_tts
                 import gc; gc.collect()
 
-            with open(self.cfg.target_srt_file, 'r', encoding='utf-8') as f:
-                subs = list(srt.parse(f.read()))
-
-            worker_args = [(sub, turns, str(v_stem), self.cfg.hybrid, self.cfg.confidence, self.cfg.target_lang, self.cfg.max_speakers) for sub in subs]
             log.info(f"Step 5: Parallel Dubbing (Workers: {self.cfg.workers})...")
             final_results = []
             completed = 0
             
             with mp.Pool(processes=self.cfg.workers, initializer=init_worker) as pool:
-                for res in pool.imap_unordered(dub_worker_standalone, worker_args):
+                # Swapped 'worker_args' for 'master_worker_args'
+                for res in pool.imap_unordered(dub_worker_standalone, master_worker_args):
                     if isinstance(res, str): log.error(res)
                     elif res: 
                         final_results.append(res)
                         log.info(f'[Worker] Successfully generated Line {res[3]}: "{res[4]}"')
                     completed += 1
-                    self.progress_queue.put(50 + (completed / len(subs)) * 35)
+                    # Swapped len(subs) for len(master_worker_args)
+                    self.progress_queue.put(50 + (completed / len(master_worker_args)) * 35)
             self.progress_queue.put(85)
 
             # --- STEP 6: ASSEMBLY ---
@@ -276,6 +379,21 @@ class DubbingPipeline:
             final_dialogue_track = np.clip(final_dialogue_track, -1.0, 1.0)
             self.progress_queue.put(90)
 
+            # --- PRE-DUBBING CLEANUP ---
+            log.info("Clearing Transcription/Diarization models from VRAM...")
+            try:
+                # Delete the large model objects
+                if 'model' in locals(): del model
+                if 'diarize_model' in locals(): del diarize_model
+
+                # Force Python and PyTorch to physically release the memory
+                import gc
+                gc.collect()
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+            except Exception as e:
+                log.warning(f"Cleanup failed (non-critical): {e}")
+
             # --- STEP 7: AUDIO MIXING & NORMALIZATION ---
             log.info("Step 7: Normalizing and Mixing Audio (LUFS Balancing)...")
             final_dialogue_path = TEMP_DIR / "final_dialogue.wav"
@@ -284,7 +402,7 @@ class DubbingPipeline:
             sf.write(final_dialogue_path, final_dialogue_track, sr)
 
             run_and_log([
-                "ffmpeg", "-y", "-loglevel", "error",
+                "ffmpeg", "-y", "-loglevel", "verbose",
                 "-i", bg_stem, "-i", final_dialogue_path,
                 "-filter_complex",
                 "[0:a]loudnorm=I=-26:TP=-2.0:LRA=11[bg]; "
@@ -299,7 +417,7 @@ class DubbingPipeline:
             self.cfg.output_file.parent.mkdir(parents=True, exist_ok=True)
             
             mux_cmd = [
-                "ffmpeg", "-y", "-loglevel", "error",
+                "ffmpeg", "-y", "-loglevel", "verbose",
                 "-i", self.cfg.video_file,
                 "-i", mixed_path,
                 "-i", self.cfg.source_srt_file,
