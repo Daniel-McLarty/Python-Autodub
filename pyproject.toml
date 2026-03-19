@@ -1,71 +1,84 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+# Copyright (C) Daniel McLarty 2026
+
 [project]
 name = "python-autodub"
 version = "2.0.0"
-description = "AI Auto-Dubbing Studio: WhisperX + GPT-SoVITS V3"
-requires-python = "==3.10.19"
-dependencies = [
-    "numpy==1.22.0",
-    "tts==0.22.0",
-    "demucs==4.0.1",
-    "srt==3.5.3",
-    "pydub==0.25.1",
-    "sv-ttk==2.6.1",
-    "darkdetect",
-    "transformers==4.36.2",
-    "librosa",
-    "soundfile",
-    "pyannote-audio==3.1.1",
-    "lightning==2.6.1",
-    "setuptools==79.0.1",
+description = "Python Autodub Studio: AI-Powered Auto-Dubbing Software"
+license = { text = "MPL-2.0" }
+authors = [
+    { name = "Daniel McLarty" }
+]
+requires-python = "==3.12.*"
+classifiers = [
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Multimedia :: Sound/Audio :: Analysis",
 ]
 
+dependencies = [
+    "f5-tts==1.1.17",
+    "whisperx==3.8.2",
+    "demucs==4.0.1",
+    "srt==3.5.3",
+    "sv-ttk==2.6.1",
+    "darkdetect==0.8.0",
+    "librosa==0.11.0",
+    "soundfile==0.13.1",
+    "pyannote-audio==4.0.4",
+    "lightning==2.6.1",
+    "hf-xet==1.4.0",
+    "av==16.1.0",
+    "numpy==2.4.3",
+]
 
 [project.optional-dependencies]
 cpu = [
-  "torch==2.5.1",
-  "torchvision==0.20.1",
-  "torchaudio==2.5.1",
+  "torch==2.8.0",
+  "torchvision==0.23.0",
+  "torchaudio==2.8.0",
   "torch-audiomentations==0.12.0",
   "torch-pitch-shift==1.2.5",
   "torchcodec==0.10.0",
-  "torchmetrics==1.8.2",
+  "torchmetrics==1.9.0",
 ]
-cu121 = [
-  "torch==2.5.1",
-  "torchvision==0.20.1",
-  "torchaudio==2.5.1",
+cu128 = [
+  "torch==2.8.0",
+  "torchvision==0.23.0",
+  "torchaudio==2.8.0",
   "torch-audiomentations==0.12.0",
   "torch-pitch-shift==1.2.5",
   "torchcodec==0.10.0",
-  "torchmetrics==1.8.2",
+  "torchmetrics==1.9.0",
 ]
 
 [tool.uv]
+cache-dir = ".uv_cache"
 conflicts = [
-  [
-    { extra = "cpu" },
-    { extra = "cu121" },
-  ],
+  [ { extra = "cpu" }, { extra = "cu128" } ],
 ]
 
 [tool.uv.sources]
-# This tells uv EXACTLY which file to grab for each extra
 torch = [
   { index = "pytorch-cpu", extra = "cpu" },
-  { index = "pytorch-cu121", extra = "cu121" },
+  { index = "pytorch-cu128", extra = "cu128" },
 ]
 torchvision = [
   { index = "pytorch-cpu", extra = "cpu" },
-  { index = "pytorch-cu121", extra = "cu121" },
+  { index = "pytorch-cu128", extra = "cu128" },
 ]
 torchaudio = [
   { index = "pytorch-cpu", extra = "cpu" },
-  { index = "pytorch-cu121", extra = "cu121" },
+  { index = "pytorch-cu128", extra = "cu128" },
 ]
 
 [[tool.uv.index]]
-name = "pytorch-cu121"
-url = "https://download.pytorch.org/whl/cu121"
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
 [[tool.uv.index]]

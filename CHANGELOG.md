@@ -86,3 +86,31 @@
 ### Bug Fixes
 * **Build Environment:** Fixed a bug in Test-MSVCBuildTools where the script failed to detect existing Visual Studio Community/Pro/Enterprise installations, causing redundant downloads of MSVC Build Tools.
 * **Detection Logic:** Updated vswhere query to use the -products * flag and version pinning [17.0, 18.0) to correctly identify Visual Studio 2022 environments.
+
+## [2.0.0] - 2026-03-11
+### The "Next-Gen Audio" Overhaul
+Version 2.0.0 is a complete architectural rebuild of the Python Autodub pipeline, focusing on state-of-the-art voice generation, strict audio-sync safety nets, and seamless cross-platform deployment.
+
+### Added
+* **F5-TTS Integration:** Completely replaced Coqui XTTSv2 with the transformer-based F5-TTS model, drastically improving prosody, emotion, and generation speed.
+* **Smart Diarization Bypass:** The pipeline now automatically bypasses the Pyannote Diarization model entirely when `Max Speakers` is set to 1, saving ~3GB of VRAM and significantly reducing processing time.
+* **Absolute Margin Speaker Logic:** Introduced a robust math system for multi-speaker overlap. The pipeline now compares the ratio of overlapping speakers and assigns voices based on the user-defined `Confidence Margin` (default 10%), preventing background noises from stealing clones.
+* **The "Guillotine" Assembly Step:** Added intelligent time-shrinking via `librosa`. If F5-TTS hallucinates extra audio, the pipeline uses a phase vocoder to safely speed the audio up (max 2x). If it still exceeds the subtitle window, the tail is hard-truncated to guarantee it never bleeds into the next line.
+* **Pre-Speech Auto-Trimming:** Added an aggressive `top_db=35` trim to the start of all generated lines to eliminate AI "warm-up" latency and ensure frame-perfect lip sync.
+* **Native Launchers:** Replaced `test_env.py` and `run_dub.py` with native OS deployment scripts:
+  * `Launch_UI.ps1` / `.exe` for Windows (includes automatic MSVC Build Tools detection and installation).
+  * `Launch_UI.sh` / `install_linux_shortcut.sh` for Linux (includes distro-agnostic C++ compiler checks and native `.desktop` app grid integration).
+* **Console Spam Suppression:** Redirected F5-TTS inference logs to `os.devnull` (with UTF-8 encoding support) to keep the parent shell clean during generation.
+* **Hugging Face Progress Bars:** Added a custom `sys.stderr` interceptor to capture and display Hugging Face model download progress directly inside the Tkinter GUI (updating once per second).
+
+### Changed
+* **Audio Backend Engine Swap:** Completely removed `pydub`. The entire pipeline now relies purely on `numpy`, `soundfile`, and `librosa` for frame-accurate audio manipulation, resolving cross-drive caching issues and millisecond-rounding drift.
+* **Environment Management:** Transitioned from `pip` to `uv` for lightning-fast, reproducible dependency syncing.
+* **VRAM Management:** Added aggressive `gc.collect()` and `torch.cuda.empty_cache()` commands between major pipeline steps (e.g., after WhisperX diarization) to prevent Out-Of-Memory (OOM) crashes on long videos.
+* **Hallucination Mitigation:** The pipeline now automatically forces terminal punctuation (e.g., a period) onto the end of open-ended subtitles to explicitly trigger the F5-TTS stop token.
+* **Hybrid Clone Optimization:** The Base Clone auditor now strictly filters for shorter 4-to-7-second reference audio chunks when Hybrid mode is active, preventing F5-TTS from exceeding its context window and hallucinating.
+
+### Removed
+* Removed `pydub` from all dependencies.
+* Removed legacy `run_dub.py` headless script (functionality absorbed by the UI and config system).
+* Removed `test_env.py` (environment validation is now handled natively by the OS launchers).
