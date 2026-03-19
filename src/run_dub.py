@@ -1,31 +1,47 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
+# Copyright (C) Daniel McLarty 2026
 
 import os
-import subprocess
-import shutil
-import srt
-import torch
-import logging
+import sys
 import warnings
 
-import multiprocessing as mp
-
-from pydub import AudioSegment
-from pyannote.audio import Pipeline 
-from tqdm import tqdm
-
+# --- SILENCE WARNINGS ---
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
-# --- PATHING SETUP ---
+# --- PATHING & ENV SETUP ---
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(SCRIPT_DIR)
+
+# --- MODEL REDIRECTION ---
+MODELS_DIR = os.path.join(ROOT_DIR, "models")
+os.makedirs(MODELS_DIR, exist_ok=True)
+
+# Set these BEFORE importing torch or pyannote
+os.environ["HF_HOME"] = os.path.join(MODELS_DIR, "huggingface")
+os.environ["HUGGINGFACE_HUB_CACHE"] = os.path.join(MODELS_DIR, "huggingface")
+os.environ["TORCH_HOME"] = os.path.join(MODELS_DIR, "torch")
+os.environ["XDG_CACHE_HOME"] = os.path.join(MODELS_DIR, "misc_cache")
+os.environ["TTS_HOME"] = os.path.join(MODELS_DIR, "tts")
+
+# --- STANDARD LIBRARY IMPORTS ---
+import subprocess
+import srt
+import logging
+import multiprocessing as mp
+from tqdm import tqdm
+
+# --- AI IMPORTS ---
+import torch
+from pydub import AudioSegment
+from pyannote.audio import Pipeline 
+
+
+# --- DIRECTORY SETUP ---
 TEMP_DIR = os.path.join(ROOT_DIR, "temp")
 OUTPUT_DIR = os.path.join(ROOT_DIR, "output")
-
-# Ensure required directories exist
 os.makedirs(TEMP_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(os.path.join(TEMP_DIR, "base_clones"), exist_ok=True)
@@ -103,6 +119,35 @@ if __name__ == "__main__":
     mp.freeze_support()
     try: mp.set_start_method('spawn', force=True)
     except RuntimeError: pass
+
+    # --- COQUI TOS AGREEMENT CHECK ---
+    tos_file = os.path.join(MODELS_DIR, "tts", ".tos_agreed")
+
+    if not os.path.exists(tos_file):
+        print("\n" + "="*60)
+        print("Coqui TTS Model License Agreement")
+        print("="*60)
+        print("To use the voice cloning features, you must confirm the following:")
+        print(' > "I have purchased a commercial license from Coqui: licensing@coqui.ai"')
+        print(' > "Otherwise, I agree to the terms of the non-commercial CPML: https://coqui.ai/cpml"')
+        print("="*60)
+
+        while True:
+            ans = input("Do you agree to these terms? [y/n]: ").strip().lower()
+            if ans in ['y', 'yes']:
+                # Save the agreement so we don't ask again
+                os.makedirs(os.path.dirname(tos_file), exist_ok=True)
+                with open(tos_file, 'w') as f:
+                    f.write("Agreed")
+                break
+            elif ans in ['n', 'no']:
+                print("You must agree to the Terms of Service to use the voice generation. Exiting...")
+                sys.exit(1)
+            else:
+                print("Please type 'y' or 'n'.")
+
+    # If the file exists or they just agreed, safely bypass the worker prompt
+    os.environ["COQUI_TOS_AGREED"] = "1"
 
     logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s', handlers=[logging.FileHandler(LOG_FILE, mode='w'), logging.StreamHandler()])
     log = logging.getLogger(__name__)
