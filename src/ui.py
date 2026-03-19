@@ -366,11 +366,26 @@ class DubbingPipeline:
                     path, start, target_ms, idx, text = res
                     try:
                         line_audio = AudioSegment.from_wav(path)
+
+                        # Only stretch if the generated audio is significantly longer than the subtitle
                         if len(line_audio) > (target_ms + 200):
-                            ratio = max(0.5, min(len(line_audio)/target_ms, 2.0))
+                            # Prevent ZeroDivisionError if an SRT has a glitchy 0-second duration
+                            safe_target = max(target_ms, 1)
+                            ratio = max(0.5, min(len(line_audio) / safe_target, 2.0))
                             tmp = str(Path(path).with_name(f"{Path(path).stem}_adj.wav"))
-                            subprocess.run(["ffmpeg", "-y", "-i", path, "-filter:a", f"atempo={ratio}", tmp], capture_output=True)
-                            line_audio = AudioSegment.from_wav(tmp)
+
+                            try:
+                                # Using run_and_log to catch FFmpeg divadom instead of failing silently
+                                run_and_log(["ffmpeg", "-y", "-i", path, "-filter:a", f"atempo={ratio:.4f}", tmp], log)
+
+                                # Verify the file actually got created before trying to load it
+                                if Path(tmp).exists():
+                                    line_audio = AudioSegment.from_wav(tmp)
+                                else:
+                                    log.warning(f"File missing after atempo filter for line {idx}, falling back to original.")
+                            except Exception as ffmpeg_err:
+                                log.warning(f"Time-stretch failed for line {idx} ({ffmpeg_err}), falling back to original.")
+
                         final_dialogue_track = final_dialogue_track.overlay(line_audio, position=start)
                     except Exception as e:
                         log.error(f"Failed to overlay line {idx}: {e}")
@@ -383,7 +398,9 @@ class DubbingPipeline:
             mixed_path = TEMP_DIR / "mixed.wav"
 
             final_dialogue_track.export(str(final_dialogue_path), format="wav")
-            filter_complex = "[0:a]loudnorm=I=-14:TP=-2.0:LRA=11[bg]; [1:a]loudnorm=I=-12:TP=-1.0:LRA=11[dialog]; [bg][dialog]amix=inputs=2:duration=longest[out]"
+
+            # Lowered background LUFS from -14 to -26 so it doesn't overpower the dialogue
+            filter_complex = "[0:a]loudnorm=I=-26:TP=-2.0:LRA=11[bg]; [1:a]loudnorm=I=-12:TP=-1.0:LRA=11[dialog]; [bg][dialog]amix=inputs=2:duration=longest[out]"
 
             run_and_log([
                 "ffmpeg", "-y", "-loglevel", "verbose",
