@@ -24,6 +24,7 @@ models/
 # Logs
 *.log
 dubbing_process.log
+.req_hash
 
 # Generated Folders & Artifacts
 temp/

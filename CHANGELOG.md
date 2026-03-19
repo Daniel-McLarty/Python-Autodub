@@ -44,3 +44,21 @@
 
 - The Windows exe works without printing incorrect errors to the screen.
 - The Windows exe now saves install state to load quicker on future loads.
+
+## [v1.1.0] - 2026-03-08
+*(Developer Note: The "Quality of Life & Architecture" Update. A massive refactor separating the GUI from the AI logic, alongside highly requested features like dark mode, smart resuming, and full state saving.)*
+
+### UI & User Experience
+* **Native OS Theming:** Integrated `sv_ttk` and `darkdetect` to automatically apply a modern Windows 11 Light/Dark theme based on the user's system preferences.
+* **Full UI State Persistence:** Expanded `ui_config.json` functionality. The app now remembers all configuration settings (workers, max speakers, output paths, etc.) between sessions, rather than just the Hugging Face token.
+* **Custom Output Controls:** Added dedicated UI fields allowing users to specify the exact output directory and filename for the final dubbed MKV.
+* **Force Clean Build:** Added a checkbox to manually purge the `temp/` directory (safely preserving logs) for users wanting to guarantee a fresh pipeline run.
+
+### Pipeline Intelligence & Logging
+* **Smart Resume via File Hashing:** Implemented MD5 chunk-hashing for input video and SRT files. The pipeline now detects if inputs have changed; if they match the previous run, it safely resumes using existing isolated stems and cloned voices, saving significant processing time.
+* **Enhanced Worker Logging:** Modified the parallel worker return tuples to pass subtitle text back to the main thread. Logs now explicitly print the text of the line being generated (e.g., `[Worker] Successfully generated Line 42: "Hello world"`).
+
+### Architecture & Refactoring
+* **Separation of Concerns:** Broke apart the UI "God Class." Extracted all backend FFmpeg, Demucs, Pyannote, and TTS logic into a dedicated, standalone `DubbingPipeline` class to prevent UI freezing and improve maintainability.
+* **Strict Configuration Typing:** Replaced generic dictionary passing with a `PipelineConfig` dataclass, ensuring strict type-checking and IDE auto-completion for pipeline variables.
+* **Pathlib Migration:** Refactored all internal directory and file management to use Python's built-in `pathlib` instead of `os.path`, eliminating cross-platform slash escaping issues (especially around Demucs).
