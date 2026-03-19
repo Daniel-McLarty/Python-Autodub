@@ -3,6 +3,7 @@
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import os
+import sys
 import subprocess
 import shutil
 import srt
@@ -273,10 +274,17 @@ class DubbingApp:
             self.progress_queue.put(15)
             # 2. Demucs
             log.info("Step 2: Demucs Separation (4-Stem Mode)...")
-            subprocess.run(["demucs", "-d", "cuda", "-o", TEMP_DIR, full_audio], check=True)
 
-            stem_dir = os.path.join(TEMP_DIR, "htdemucs/full_audio")
+            # Use python -m to ensure it runs explicitly in this environment and catches errors
+            subprocess.run([sys.executable, "-m", "demucs.separate", "-d", "cuda", "-o", TEMP_DIR, full_audio], check=True)
+
+            # Fix the pathing so Windows uses proper backslashes
+            stem_dir = os.path.join(TEMP_DIR, "htdemucs", "full_audio")
             v_stem = os.path.join(stem_dir, "vocals.wav")
+
+            # Verify Demucs actually did its job
+            if not os.path.exists(v_stem):
+                raise FileNotFoundError(f"Demucs failed silently! Could not find stems in {stem_dir}. You might have run out of GPU VRAM.")
 
             log.info("Merging non-vocal stems into background track...")
             bg_stem = os.path.join(TEMP_DIR, "final_background_noise.wav")
