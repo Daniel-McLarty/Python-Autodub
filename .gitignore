@@ -1,0 +1,37 @@
+# Virtual Environments
+dub_env/
+venv/
+env/
+
+# Media Files
+*.mkv
+*.mp4
+*.avi
+*.wav
+!src/generic_female.wav
+!src/generic_male.wav
+*.mp3
+*.flac
+
+# Subtitle Files
+*.srt
+*.ass
+*.vtt
+
+# Logs
+*.log
+dubbing_process.log
+
+# Generated Folders & Artifacts
+temp/
+output/
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# OS Generated
+.DS_Store
+Thumbs.db
