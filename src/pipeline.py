@@ -9,6 +9,7 @@ import logging
 import json
 import shutil
 import librosa
+import gc
 import numpy as np
 import soundfile as sf
 import multiprocessing as mp
@@ -21,6 +22,13 @@ from whisperx.diarize import DiarizationPipeline
 from config import PipelineConfig, TEMP_DIR
 from utils import get_file_hash, run_and_log, HFDownloadLogger
 from worker import init_worker, dub_worker_standalone
+
+def clear_vram():
+    """Safely clears memory regardless of the active hardware."""
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
 
 class DubbingPipeline:
     def __init__(self, config: PipelineConfig, logger: logging.Logger, progress_queue: queue.Queue):
@@ -70,11 +78,23 @@ class DubbingPipeline:
     def run(self):
         log = self.logger
         log.info("--- SYSTEM CHECK ---")
-        if torch.cuda.is_available():
+
+        # Determine the device dynamically
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        if device == "cuda":
             log.info(f"SUCCESS: CUDA active. Using {torch.cuda.get_device_name(0)}")
         else:
-            log.error("FAILED: No GPU detected. Check drivers!")
-            return False
+            log.warning("FAILED TO DETECT GPU: Falling back to CPU mode.")
+            log.warning("***********************************************************************************")
+            log.warning("WARNING: You are running on CPU. You will think this is a crypto miner or it is ")
+            log.warning("stuck calculating pi to ten trillion digits. No, it is not. You just REALLY ")
+            log.warning("should not run this on the CPU unless your idea of fun is watching paint dry ")
+            log.warning("or grass grow. It will take hours per minute of video.")
+            log.warning("***********************************************************************************")
+
+            import time
+            time.sleep(5)
 
         try:
             self.manage_temp_state()
@@ -122,7 +142,7 @@ class DubbingPipeline:
                     # Run Demucs on the small chunk
                     run_and_log([
                         sys.executable, "-m", "demucs.separate", "-n", "htdemucs",
-                        "-d", "cuda", "--two-stems", "vocals", "--segment", "7", "-j", "1",
+                        "-d", device, "--two-stems", "vocals", "--segment", "7", "-j", "1",
                         "-o", str(chunk_dir), str(c_input)
                     ], log)
 
@@ -209,10 +229,10 @@ class DubbingPipeline:
 
             # --- Initialize Models Once ---
             with HFDownloadLogger(log):
-                model_a, metadata = whisperx.load_align_model(language_code=self.cfg.source_lang, device="cuda")
+                model_a, metadata = whisperx.load_align_model(language_code=self.cfg.source_lang, device=device)
                 if self.cfg.max_speakers > 1:
                     from whisperx.diarize import DiarizationPipeline
-                    diarize_model = DiarizationPipeline(token=self.cfg.token, device="cuda")
+                    diarize_model = DiarizationPipeline(token=self.cfg.token, device=device)
 
             master_worker_args = []
             speaker_segments = {}
@@ -235,7 +255,7 @@ class DubbingPipeline:
                 # Offset SRT timestamps to zero for the aligner
                 offset_chunk = [{"text": s.content.replace('\n', ' '), "start": max(0.0, s.start.total_seconds() - c_start), "end": max(0.0, s.end.total_seconds() - c_start)} for s in chunk["subs"]]
 
-                aligned_chunk = whisperx.align(offset_chunk, model_a, metadata, chunk_audio_16k, "cuda", return_char_alignments=False)
+                aligned_chunk = whisperx.align(offset_chunk, model_a, metadata, chunk_audio_16k, device, return_char_alignments=False)
 
                 if self.cfg.max_speakers > 1:
                     diarize_segments = diarize_model(chunk_audio_16k, min_speakers=1, max_speakers=self.cfg.max_speakers)
@@ -277,7 +297,7 @@ class DubbingPipeline:
                 del model_a
                 if self.cfg.max_speakers > 1: del diarize_model
             except Exception: pass
-            import gc; gc.collect(); torch.cuda.empty_cache()
+            clear_vram()
 
             self.progress_queue.put(40)
 
@@ -310,7 +330,7 @@ class DubbingPipeline:
             # Wrap the F5-TTS loading in the interceptor to capture any HF downloads and log them!
             with HFDownloadLogger(log):
                 from f5_tts.api import F5TTS
-                _temp_tts = F5TTS(device="cuda")
+                _temp_tts = F5TTS(device=device)
                 del _temp_tts
                 import gc; gc.collect()
 
@@ -318,7 +338,7 @@ class DubbingPipeline:
             final_results = []
             completed = 0
             
-            with mp.Pool(processes=self.cfg.workers, initializer=init_worker) as pool:
+            with mp.Pool(processes=self.cfg.workers, initializer=init_worker, initargs=(device,)) as pool:
                 # Swapped 'worker_args' for 'master_worker_args'
                 for res in pool.imap_unordered(dub_worker_standalone, master_worker_args):
                     if isinstance(res, str): log.error(res)
@@ -387,10 +407,7 @@ class DubbingPipeline:
                 if 'diarize_model' in locals(): del diarize_model
 
                 # Force Python and PyTorch to physically release the memory
-                import gc
-                gc.collect()
-                torch.cuda.empty_cache()
-                torch.cuda.ipc_collect()
+                clear_vram()
             except Exception as e:
                 log.warning(f"Cleanup failed (non-critical): {e}")
 
@@ -444,10 +461,10 @@ class DubbingPipeline:
 
             self.progress_queue.put(100)
             log.info("--- SUCCESS! Pipeline Complete. ---")
-            torch.cuda.empty_cache()
+            clear_vram()
             return True
 
         except Exception as e:
             log.error(f"PIPELINE FAILED: {str(e)}")
-            torch.cuda.empty_cache()
+            clear_vram()
             return False
