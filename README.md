@@ -46,25 +46,17 @@ This software uses a custom build of **FFmpeg** licensed under the [GNU Lesser G
 ## Installation
 
 ### Windows
-Double-click `setup.bat` or run it from the command line. This will create a virtual environment named `dub_env` and install all dependencies.
+Run `uv sync --extra cu121` to set up the environment.
 Or you can also use the `Python-Autodub.exe` found in the project root directory directly.
 You can also download a zip folder of a Windows release on the GitHub Releases page.
 
 ### Linux
-Run the following commands in your terminal:
-```bash
-chmod +x setup.sh
-./setup.sh
-```
+Run the following commands in your terminal: `uv sync --extra cu121`
 
 ## Usage
 
-1.  Activate your virtual environment:
-    -   Windows: `dub_env\Scripts\activate`
-    -   Linux: `source dub_env/bin/activate`
-2.  Test your environment: `python src/test_env.py`
-3.  Run the GUI Application: `python src/ui.py`
-(Alternatively, configure the variables inside `src/run_dub.py` and run `python src/run_dub.py` for a headless CLI experience).
+- Run `uv run --extra cu121 src/ui.py`
+(Alternatively, configure the variables inside `src/run_dub.py` and run `uv run --extra cu121 src/run_dub.py` for a headless CLI experience).
 Additionally, Windows users can just run Python-Autodub.exe and avoid any manual python setup.
 
 ## Folder Structure & Artifacts

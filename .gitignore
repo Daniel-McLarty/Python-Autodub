@@ -1,7 +1,6 @@
-# Virtual Environments
-dub_env/
-venv/
-env/
+# Virtual Environment
+.venv/
+.vscode/
 
 # AI Models
 models/
